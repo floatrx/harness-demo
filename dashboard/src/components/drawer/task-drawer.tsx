@@ -6,7 +6,9 @@ import type { TaskDetail } from '@/lib/task-detail';
 import { usd } from '@/lib/format';
 import { RoleAvatar } from '@/components/ui/role-avatar';
 import { StageTrack } from '@/components/board/stage-track';
+import { ClaudeSpinner } from '@/components/ui/claude-spinner';
 import { InterviewPanel } from './interview-panel';
+import { PrototypeReview } from './prototype-review';
 import { MarkdownPanel } from './markdown-panel';
 import { UnitsPanel } from './units-panel';
 
@@ -19,7 +21,14 @@ export const TaskDrawer = ({ task, projectId }: Props) => {
   const openCount = task.questions.filter((question) => question.state === 'open').length;
   const tabs = [
     ...(task.questions.length
-      ? [{ id: 'interview', label: 'Interview', count: openCount, body: <InterviewPanel questions={task.questions} /> }]
+      ? [
+          {
+            id: 'interview',
+            label: 'Interview',
+            count: openCount,
+            body: <InterviewPanel questions={task.questions} projectId={projectId} taskId={task.id} />,
+          },
+        ]
       : []),
     {
       id: 'spec',
@@ -48,6 +57,15 @@ export const TaskDrawer = ({ task, projectId }: Props) => {
             label: 'Prototype',
             body: (
               <div className="space-y-3">
+                {task.status === 'prototype' && task.prototype.state === 'review' && (
+                  <PrototypeReview projectId={projectId} taskId={task.id} roundsLeft={task.prototype.roundsLeft} />
+                )}
+                {task.status === 'prototype' && task.prototype.state === 'drafting' && (
+                  <p className="flex items-center text-[13px] text-muted">
+                    <ClaudeSpinner />
+                    The designer drafts the next round.
+                  </p>
+                )}
                 {task.hasPrototype && (
                   <img
                     src={`/api/p/${projectId}/artifacts/${task.id}/prototype.svg`}

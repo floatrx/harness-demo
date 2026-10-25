@@ -2,11 +2,13 @@
 
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { loadConfig } from '@harness/core/config';
 import { tracePaths } from '@harness/core/paths';
+import { prototypeRounds } from '@harness/core/task/write';
 import { type Question, getSection, parseCriteria, parseQuestions } from '@harness/core/task/parse';
 import { loadTask } from '@harness/core/task/task';
 import type { Status } from '@harness/core/task/transitions';
-import { type Handoff, STAGE_ROLE, findProject, readHandoffs } from './board';
+import { type Handoff, STAGE_ROLE, findProject, readHandoffs } from './board.ts';
 
 export interface TaskDetail {
   id: string;
@@ -15,6 +17,8 @@ export interface TaskDetail {
   trackStatus: Status;
   kind: string | null;
   hasPrototype: boolean;
+  /** Prototype review state and the comment budget left (limits.prototypeRounds). */
+  prototype: { state: 'drafting' | 'review' | null; roundsLeft: number };
   askedBy: { role: string; stage: string; unit: number | null; costUsd: number | null } | null;
   sections: Record<'Draft' | 'Spec' | 'Plan' | 'Prototype' | 'Acceptance criteria', string>;
   questions: Question[];
@@ -47,6 +51,10 @@ export function loadTaskDetail(projectId: string, taskId: string): TaskDetail | 
     trackStatus: fields.status === 'parked' ? (fields.parkedFrom ?? 'parked') : fields.status,
     kind: fields.kind,
     hasPrototype: existsSync(join(tracePaths(project.path).artifacts, taskId, 'prototype.svg')),
+    prototype: {
+      state: fields.prototype,
+      roundsLeft: Math.max(0, loadConfig(project.path).limits.prototypeRounds - prototypeRounds(doc)),
+    },
     askedBy:
       fields.status === 'needs-input' && fields.resume
         ? {

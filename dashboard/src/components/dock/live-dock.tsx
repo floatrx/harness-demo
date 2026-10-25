@@ -1,6 +1,7 @@
 import type { DockModel } from '@/lib/board';
 import { clock, usd } from '@/lib/format';
 import { ClaudeSpinner } from '@/components/ui/claude-spinner';
+import { ClaudeWorking } from '@/components/ui/claude-working';
 import { RoleAvatar } from '@/components/ui/role-avatar';
 
 interface Props {
@@ -44,10 +45,7 @@ export const LiveDock = ({ dock }: Props) => (
         <div className="flex items-center gap-2 text-[12.5px]">
           <RoleAvatar role={dock.running.role} state="live" />
           <div>
-            <b className="flex items-center text-accent">
-              <ClaudeSpinner />
-              unit {dock.running.unit} · {dock.running.task}
-            </b>
+            <ClaudeWorking label={`unit ${dock.running.unit} · ${dock.running.task}`} since={dock.running.startedAt} />
             <p className="text-xs text-muted">
               {dock.running.stage} · {dock.running.role} · since {clock(dock.running.startedAt)}
             </p>

@@ -10,7 +10,12 @@ import { nextStep, stageFor } from '@harness/core/queue';
 import { lockHolder } from '@harness/core/supervise';
 import { getSection, openQuestions, parseCriteria } from '@harness/core/task/parse';
 import { type LoadedTask, listTaskFiles, loadTask } from '@harness/core/task/task';
-import { type Status, humanTargets } from '@harness/core/task/transitions';
+import {
+  HUMAN_TRANSITIONS,
+  type Status,
+  type TransitionContext,
+  type TransitionTask,
+} from '@harness/core/task/transitions';
 import { validateTask } from '@harness/core/task/validate';
 import { prototypeRounds } from '@harness/core/task/write';
 
@@ -54,8 +59,11 @@ export interface CardModel {
   trackStatus: Status;
   hasPrototype: boolean;
   working: { role: string; since: string; unit: number } | null;
+  /** Not running now, but the next thing that happens to it is an agent unit (or the runner's advance). */
+  agentNext: boolean;
   issues: string[];
-  dropTargets: Status[];
+  /** Where a drag may drop this card, and the human action that drop fires. */
+  moves: { target: Status; action: string }[];
 }
 
 export interface DockModel {
@@ -121,8 +129,17 @@ function cardMeta(
         action: 'Submit',
         meta: fields.created ? `Created ${shortDate(fields.created)}` : 'Draft',
       };
-    case 'needs-input':
-      return { owner: 'you', action: 'Answer', meta: plural(openQuestions(doc).length, 'open question') };
+    case 'needs-input': {
+      const open = openQuestions(doc).length;
+      /* Every question answered: the runner moves it back to the stage that asked on its next pick. */
+      if (!open)
+        return {
+          owner: STAGE_ROLE[fields.resume ?? 'spec'] ?? null,
+          action: null,
+          meta: `Answered · back to ${fields.resume ?? 'spec'} next`,
+        };
+      return { owner: 'you', action: 'Answer', meta: plural(open, 'open question') };
+    }
     case 'planned': {
       const checks = parseCriteria(getSection(doc, 'Acceptance criteria')).filter(
         (criterion) => criterion.tag === 'closes',
@@ -159,6 +176,14 @@ function cardMeta(
   }
 }
 
+/* The human transitions that move a card to another column; a comment keeps it in place, so it is no drag. */
+const dragMoves = (task: TransitionTask, ctx: TransitionContext) =>
+  HUMAN_TRANSITIONS.flatMap((transition) => {
+    if (transition.from !== task.status || (transition.guard && !transition.guard(task, ctx))) return [];
+    const target = transition.to(task);
+    return target && target !== task.status ? [{ target, action: transition.action }] : [];
+  });
+
 const isToday = (iso: string) => new Date(iso).toDateString() === new Date().toDateString();
 
 export function loadBoard(id: string): BoardModel {
@@ -192,14 +217,17 @@ export function loadBoard(id: string): BoardModel {
       trackStatus: fields.status === 'parked' ? (fields.parkedFrom ?? 'parked') : fields.status,
       hasPrototype: existsSync(join(paths.artifacts, fields.id, 'prototype.svg')),
       working: isRunning && running ? { role: running.role, since: running.startedAt, unit: running.unit } : null,
+      agentNext: !isRunning && (!!stageFor(fields) || (fields.status === 'needs-input' && fields.openQuestions === 0)),
       issues,
-      dropTargets: isRunning ? [] : humanTargets(fields, ctx),
+      moves: isRunning ? [] : dragMoves(fields, ctx),
     };
   });
 
+  /* What the supervisor takes after the unit in flight. */
   const step = nextStep(
     tasks.map((task) => task.fields),
     ctx,
+    new Set(running ? [running.task] : []),
   );
   const upNext = !step
     ? null

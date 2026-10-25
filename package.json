@@ -9,12 +9,14 @@
   "packageManager": "pnpm@12.8.1",
   "scripts": {
     "harness": "node harness/bin/harness.ts",
-    "test": "node --test harness/",
+    "test": "node --test harness/ dashboard/",
     "self-test": "node harness/bin/harness.ts self-test",
     "typecheck": "pnpm -r exec tsc -b",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "provenance": "! rg -i 'mgea[r]|bserve[d]|gotenber[g]|FB-[0-9]' --glob '!.work' --glob '!node_modules' ."
+    "provenance": "! rg -i 'mgea[r]|bserve[d]|gotenber[g]|FB-[0-9]' --glob '!.work' --glob '!node_modules' .",
+    "dashboard": "pnpm -C dashboard dev",
+    "dashboard:seed": "node dashboard/scripts/seed-demo.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

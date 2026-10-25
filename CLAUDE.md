@@ -10,12 +10,14 @@ over task files in a project's `.harness/tasks/`. Code-owned contracts check eve
 | Install | `pnpm install` (pnpm only — never npm or yarn) |
 | Typecheck | `pnpm -r exec tsc -b` |
 | Lint | `pnpm lint` |
-| Tests | `node --test harness/` |
+| Tests | `node --test harness/ dashboard/` (core + dashboard route handlers) |
 | Contract self-test | `node harness/bin/harness.ts self-test` |
 | CLI help | `node harness/bin/harness.ts --help` |
 | Provenance check | `pnpm provenance` |
 | Agents: list, check, sync rules | `node harness/bin/harness.ts agents --check` · `… agents --sync` |
 | What the next unit would get | `node harness/bin/harness.ts preview T-001 --project <path>` (no tokens) |
+| Dashboard | `pnpm dashboard` → http://127.0.0.1:4777 (`HARNESS_HOME` picks the registry) |
+| Demo data for the dashboard | `HARNESS_HOME=/tmp/h/home pnpm dashboard:seed /tmp/h/bookmarks` (fake agent, zero tokens) |
 
 Node 26 is required (`.nvmrc`). It runs the TypeScript in `harness/` directly by type stripping — there is no build.
 
@@ -24,6 +26,8 @@ Node 26 is required (`.nvmrc`). It runs the TypeScript in `harness/` directly by
 ```
 examples/app/             the example project TEMPLATE (Next.js bookmarks + .harness/ config and 3 seed tasks);
                           never driven in place — `harness example <dest>` makes a standalone git copy
+dashboard/                the control plane (Next 16 · HeroUI 3 · Tailwind 4): src/lib = server-only data + mutations
+                          (lib/actions.ts holds every write and its guards), src/components = UI, scripts/seed-demo.ts
 agents/                   the base specialist registry: one .md per role (frontmatter + prompt + standing-rules block)
 harness/
 ├── bin/harness.ts        the CLI — the dashboard calls the same functions and writes the same files
@@ -55,6 +59,9 @@ harness/
 - **Loop tests never touch a real project.** They run on `makeSandbox()` — a temp git repo with a bare `origin` —
   and set `HARNESS_HOME` when they need the registry. Never point a test at `examples/`.
 - **Every file write the dashboard or CLI makes is atomic** (`atomicWrite`: temp file + rename).
+- **Every dashboard write goes through `dashboard/src/lib/actions.ts`**: a POST with `x-harness: 1`, refused while
+  the task is in `running.json`, applied with the core's human actions. Route handlers only delegate to it.
+- **Dashboard server modules import with explicit `.ts` extensions** (`./board.ts`) so `node --test` can load them.
 - **Human and agent transitions are separate sets** (`HUMAN_TRANSITIONS`, `AGENT_TRANSITIONS`). The dashboard may
   only offer the human set.
 - **Standing rules live in one file**, `harness/prompts/STANDING-RULES.md`. Edit it there, then run

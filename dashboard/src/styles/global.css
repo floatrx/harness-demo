@@ -52,28 +52,37 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* The Claude Code thinking spinner on everything that is working. */
+/* The Claude Code thinking spinner: the glyph runs · ✢ ✳ ✶ ✻ ✽ and back, like the terminal. */
 @keyframes claude-spin {
   0% {
     content: '·';
   }
-  16% {
+  10% {
     content: '✢';
   }
-  33% {
+  20% {
     content: '✳';
   }
-  50% {
+  30% {
     content: '✶';
   }
-  66% {
+  40% {
     content: '✻';
   }
-  83% {
+  50% {
     content: '✽';
   }
-  100% {
-    content: '·';
+  60% {
+    content: '✻';
+  }
+  70% {
+    content: '✶';
+  }
+  80% {
+    content: '✳';
+  }
+  90% {
+    content: '✢';
   }
 }
 
@@ -82,8 +91,61 @@ body {
   animation: claude-spin 1.2s steps(1) infinite;
 }
 
+/* Waiting for an agent: the same glyph, still. */
+.claude-spinner-idle::before {
+  content: '✻';
+}
+
+/* The verb next to the spinner shimmers, as Claude Code's status line does. */
+@keyframes claude-shimmer {
+  from {
+    background-position: 120% 0;
+  }
+  to {
+    background-position: -20% 0;
+  }
+}
+
+.claude-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--accent) 0%,
+    var(--accent) 40%,
+    #f6c6b3 50%,
+    var(--accent) 60%,
+    var(--accent) 100%
+  );
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: claude-shimmer 2.2s linear infinite;
+}
+
+/* A card whose unit runs right now breathes. */
+@keyframes claude-breathe {
+  0%,
+  100% {
+    box-shadow: 0 0 0 1px rgb(217 119 87 / 0.55);
+  }
+  50% {
+    box-shadow:
+      0 0 0 1px rgb(217 119 87 / 0.95),
+      0 0 18px -6px rgb(217 119 87 / 0.55);
+  }
+}
+
+.claude-breathe {
+  animation: claude-breathe 2.4s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .claude-spinner::before {
+  .claude-spinner::before,
+  .claude-shimmer,
+  .claude-breathe {
     animation: none;
+  }
+  .claude-shimmer {
+    color: var(--accent);
   }
 }

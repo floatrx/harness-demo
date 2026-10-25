@@ -3,6 +3,7 @@ import { cn } from '@/lib/cn';
 import { ProjectNotFound, loadBoard } from '@/lib/board';
 import { loadTaskDetail } from '@/lib/task-detail';
 import { BoardView } from '@/components/board/board-view';
+import { CreateTaskModal } from '@/components/board/create-task-modal';
 import { LiveDock } from '@/components/dock/live-dock';
 import { TaskDrawer } from '@/components/drawer/task-drawer';
 import { RailNav } from '@/components/shell/rail-nav';
@@ -42,14 +43,7 @@ export default async function BoardPage({ params, searchParams }: Props) {
             <h1 className="text-2xl font-semibold tracking-tight">Board</h1>
             <WaitingLine waiting={board.waiting} />
           </div>
-          <button
-            type="button"
-            disabled
-            className="h-[34px] rounded-[7px] bg-accent px-4 text-[12.5px] font-semibold whitespace-nowrap text-accent-foreground opacity-60"
-            title="Creating tasks arrives in phase 2"
-          >
-            New task
-          </button>
+          <CreateTaskModal projectId={id} />
         </div>
         <BoardView cards={board.cards} projectId={id} selectedId={task?.id ?? null} />
       </main>

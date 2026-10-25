@@ -10,3 +10,4 @@ coverage/
 *.log
 .harness/artifacts/
 *.tsbuildinfo
+.playwright-mcp/

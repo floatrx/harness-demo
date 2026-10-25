@@ -1,9 +1,12 @@
+'use client';
+
+import { useDraggable } from '@dnd-kit/core';
 import Link from 'next/link';
 import type { CardModel } from '@/lib/board';
 import { cn } from '@/lib/cn';
-import { ClaudeSpinner } from '@/components/ui/claude-spinner';
-import { RoleAvatar } from '@/components/ui/role-avatar';
-import { StageTrack } from './stage-track';
+import { CardAction } from './card-action';
+import type { DragData } from './drag.helpers';
+import { TaskCardBody } from './task-card-body';
 
 interface Props {
   card: CardModel;
@@ -11,67 +14,44 @@ interface Props {
   isSelected: boolean;
 }
 
-export const TaskCard = ({ card, projectId, isSelected }: Props) => (
-  <Link
-    href={`/p/${projectId}?t=${card.id}`}
-    scroll={false}
-    data-testid="task-card"
-    className={cn(
-      '@container flex min-w-0 flex-col gap-1.5 rounded-card border border-border/70 bg-card p-2 transition-colors hover:border-border',
-      card.action && 'border-accent-line',
-      card.working && 'border-accent-line bg-card-run',
-      isSelected && 'ring-2 ring-accent',
-    )}
-  >
-    <div className="flex items-center gap-1.5 text-[11.5px] text-muted">
-      <span className="whitespace-nowrap tabular-nums">{card.id}</span>
-      {card.kind && <span className="hidden rounded-[5px] bg-surface-secondary px-1.5 @min-[8.5rem]:inline">{card.kind}</span>}
-      {!!card.bounces && (
-        <span className="flex gap-0.5" title={`bounce ${card.bounces} of ${card.bounceCap}`}>
-          {Array.from({ length: card.bounceCap }, (_, index) => (
-            <i
-              key={index}
-              className={cn(
-                'size-[7px] rounded-full border-[1.5px] border-danger',
-                index < card.bounces && 'bg-danger',
-              )}
-            />
-          ))}
-        </span>
+export const cardClass = (card: CardModel) =>
+  cn(
+    '@container relative flex min-w-0 flex-col gap-1.5 rounded-card border border-border/70 bg-card p-2 transition-colors hover:border-border',
+    card.action && 'border-accent-line',
+    card.working && 'claude-breathe border-accent bg-card-run',
+  );
+
+/* The whole card opens the task (a stretched link); the action button sits above the link. A card the human may
+   move is draggable — only along the moves the core allows (card.moves). */
+export const TaskCard = ({ card, projectId, isSelected }: Props) => {
+  const data: DragData = { card };
+  const { setNodeRef, attributes, listeners, isDragging } = useDraggable({
+    id: card.id,
+    data,
+    disabled: !card.moves.length,
+  });
+  return (
+    <article
+      ref={setNodeRef}
+      data-testid="task-card"
+      data-task={card.id}
+      className={cn(
+        cardClass(card),
+        isSelected && 'ring-2 ring-accent',
+        isDragging && 'opacity-30',
+        !!card.moves.length && 'cursor-grab',
       )}
-      {!card.working && card.owner && <RoleAvatar role={card.owner} className="ml-auto" />}
-    </div>
-    <h3 className="text-[13px] leading-snug font-semibold">{card.title}</h3>
-    {card.hasPrototype && (
-      <img
-        src={`/api/p/${projectId}/artifacts/${card.id}/prototype.svg`}
-        alt={`Prototype of ${card.id}`}
-        className="w-full rounded-md bg-background"
+      {...attributes}
+      {...listeners}
+    >
+      <Link
+        href={`/p/${projectId}?t=${card.id}`}
+        scroll={false}
+        className="absolute inset-0 rounded-card"
+        aria-label={`Open ${card.id}`}
       />
-    )}
-    <StageTrack status={card.trackStatus} isBad={card.isBad} />
-    <div className="flex min-h-5 items-start gap-1.5 text-xs text-muted">
-      {card.working ? (
-        <>
-          <RoleAvatar role={card.working.role} state="live" />
-          <span className="flex items-center font-semibold text-foreground">
-            <ClaudeSpinner />
-            {card.working.role} · unit {card.working.unit}
-          </span>
-        </>
-      ) : (
-        <span className={cn('line-clamp-2 leading-snug', card.isBad && 'text-danger')}>{card.meta}</span>
-      )}
-    </div>
-    {card.action && !card.working && (
-      <span
-        className={cn(
-          'flex h-7 items-center rounded-[7px] px-2.5 text-[12.5px] font-semibold',
-          card.isBad ? 'bg-surface-secondary text-foreground' : 'bg-accent-soft text-accent',
-        )}
-      >
-        {card.action}
-      </span>
-    )}
-  </Link>
-);
+      <TaskCardBody card={card} projectId={projectId} />
+      {!card.working && <CardAction card={card} projectId={projectId} />}
+    </article>
+  );
+};
