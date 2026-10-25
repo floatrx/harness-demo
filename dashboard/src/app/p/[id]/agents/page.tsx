@@ -48,14 +48,14 @@ export default async function AgentsPage({ params, searchParams }: Props) {
         lead="Who works each stage: the coordinator a unit runs as, the specialists it may dispatch, and the checks that refuse a run."
         aside={
           <span
-            className={cn('mt-1 rounded-full px-3 py-1 text-xs font-semibold', failing ? 'bg-danger/15 text-danger' : 'bg-accent-soft text-accent')}
+            className={cn('mt-1 rounded-full px-3 py-1 text-xs font-semibold whitespace-nowrap', failing ? 'bg-danger/15 text-danger' : 'bg-accent-soft text-accent')}
             data-testid="agents-status"
           >
             {failing ? `${failing} problem${failing === 1 ? '' : 's'} · runs refuse` : 'All checks pass'}
           </span>
         }
       />
-      <div className="grid grid-cols-[minmax(0,1fr)_320px] items-start gap-4">
+      <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_320px]">
         <div className="min-w-0 space-y-4">
           <section>
             <h2 className="mb-2 text-[13px] font-semibold">
@@ -63,7 +63,7 @@ export default async function AgentsPage({ params, searchParams }: Props) {
                 · one <Code>claude -p</Code> per unit, on this model
               </span>
             </h2>
-            <ol className="grid grid-cols-6 gap-2" data-testid="coordinators">
+            <ol className="grid grid-cols-3 gap-2 xl:grid-cols-6" data-testid="coordinators">
               {page.coordinators.map((row, index) => (
                 <li key={row.stage} className="rounded-card border border-line-soft bg-surface px-3 py-2.5">
                   <p className="text-[11px] text-faint tabular-nums">{index + 1} · {row.stage}</p>
@@ -82,13 +82,13 @@ export default async function AgentsPage({ params, searchParams }: Props) {
                 · passed to each unit with <Code>--agents</Code>; a dot = the stage offers it
               </span>
             </h2>
-            <table className="w-full text-[12.5px]">
+            <table className="w-full table-fixed text-[12.5px]">
               <thead className="text-left text-xs text-muted">
                 <tr>
                   <th className="px-4 py-2 font-medium">Agent</th>
-                  <th className="px-2 py-2 font-medium">Model</th>
+                  <th className="w-32 px-2 py-2 font-medium">Model</th>
                   {UNIT_STAGES.map((stage) => (
-                    <th key={stage} className="w-[62px] px-1 py-2 text-center font-medium">
+                    <th key={stage} className="w-14 px-1 py-2 text-center font-medium">
                       {stage === 'prototype' ? 'proto' : stage === 'implement' ? 'impl' : stage}
                     </th>
                   ))}
@@ -97,7 +97,7 @@ export default async function AgentsPage({ params, searchParams }: Props) {
               <tbody>
                 {page.agents.map((agent) => (
                   <tr key={agent.name} className={cn('border-t border-line-soft', selected?.name === agent.name && 'bg-surface-secondary')}>
-                    <td className="max-w-0 px-4 py-2">
+                    <td className="px-4 py-2">
                       <Link href={`/p/${id}/agents?a=${agent.name}`} className="group flex items-center gap-2" scroll={false}>
                         <RoleAvatar role={agent.name} />
                         <b className="font-semibold group-hover:text-accent">{agent.name}</b>
@@ -150,7 +150,7 @@ export default async function AgentsPage({ params, searchParams }: Props) {
             <p className="text-xs text-muted">Pick an agent to read its prompt.</p>
           )}
         </div>
-        <aside className="space-y-4">
+        <aside className="grid items-start gap-4 md:grid-cols-2 xl:grid-cols-1">
           <section className="rounded-panel border border-line-soft bg-surface px-4 py-3" data-testid="agents-checks">
             <h2 className="mb-2 text-[13px] font-semibold">Checks · every unit</h2>
             <ul className="space-y-1.5">

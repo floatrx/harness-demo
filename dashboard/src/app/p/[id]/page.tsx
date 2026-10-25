@@ -42,11 +42,47 @@ export default async function BoardPage({ params, searchParams }: Props) {
           <div className="mb-4 flex items-start justify-between gap-4">
             <div>
               <h1 className="text-2xl font-semibold tracking-tight">Board</h1>
-              <WaitingLine waiting={board.waiting} />
+              {/* An empty board has one thing to do, and its panel below says it. */}
+              {!!board.cards.length && <WaitingLine waiting={board.waiting} />}
             </div>
-            <CreateTaskModal projectId={id} />
+            {!!board.cards.length && <CreateTaskModal projectId={id} />}
           </div>
-          <BoardView cards={board.cards} projectId={id} selectedId={task?.id ?? null} />
+          {!!board.unreadable.length && (
+            <div
+              role="alert"
+              className="mb-3 rounded-card border border-danger/30 bg-danger/10 px-3 py-2 text-[13px]"
+              data-testid="unreadable-tasks"
+            >
+              <b className="text-danger">
+                {board.unreadable.length} task file{board.unreadable.length === 1 ? '' : 's'} could not be read
+              </b>{' '}
+              <span className="text-muted">— the loop skips them until they parse.</span>
+              <ul className="mt-1 text-xs text-muted">
+                {board.unreadable.map((item) => (
+                  <li key={item.file}>
+                    <code className="text-foreground">.harness/tasks/{item.file}</code>: {item.reason}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {board.cards.length ? (
+            <BoardView cards={board.cards} projectId={id} selectedId={task?.id ?? null} />
+          ) : (
+            <section
+              className="grid place-items-center rounded-panel border border-dashed border-border px-6 py-16 text-center"
+              data-testid="board-empty"
+            >
+              <h2 className="text-lg font-semibold">No tasks yet</h2>
+              <p className="mt-1 max-w-md text-sm text-muted">
+                A task starts as a draft: a title and two lines. Submit it and the writer turns it into a spec, asking
+                you when something is unclear.
+              </p>
+              <div className="mt-4">
+                <CreateTaskModal projectId={id} />
+              </div>
+            </section>
+          )}
         </main>
         {task ? <TaskDrawer task={task} projectId={id} /> : <LiveDock projectId={id} />}
       </div>

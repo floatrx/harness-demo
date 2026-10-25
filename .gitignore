@@ -11,3 +11,4 @@ coverage/
 .harness/artifacts/
 *.tsbuildinfo
 .playwright-mcp/
+dashboard/e2e/shots/

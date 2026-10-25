@@ -19,6 +19,7 @@ over task files in a project's `.harness/tasks/`. Code-owned contracts check eve
 | Dashboard | `pnpm dashboard` → http://127.0.0.1:4777 (`HARNESS_HOME` picks the registry) |
 | Demo data for the dashboard | `HARNESS_HOME=/tmp/h/home pnpm dashboard:seed /tmp/h/bookmarks` (fake agent, zero tokens) |
 | Live demo, zero tokens | start the dashboard with `AGENT_CMD="node $PWD/harness/testkit/fake-agent.ts"` (and optionally `HARNESS_FAKE_SCENARIO`) — the supervisor it starts inherits both |
+| Dashboard walkthrough (e2e + screenshots) | `pnpm -C dashboard build && pnpm dashboard:e2e` (`--docs` rewrites `docs/screenshots/`; system Chrome) |
 
 Node 26 is required (`.nvmrc`). It runs the TypeScript in `harness/` directly by type stripping — there is no build.
 
@@ -28,7 +29,8 @@ Node 26 is required (`.nvmrc`). It runs the TypeScript in `harness/` directly by
 examples/app/             the example project TEMPLATE (Next.js bookmarks + .harness/ config and 3 seed tasks);
                           never driven in place — `harness example <dest>` makes a standalone git copy
 dashboard/                the control plane (Next 16 · HeroUI 3 · Tailwind 4): src/lib = server-only data + mutations
-                          (lib/actions.ts holds every write and its guards), src/components = UI, scripts/seed-demo.ts
+                          (lib/actions.ts holds every write and its guards), src/components = UI, scripts/seed-demo.ts,
+                          e2e/walkthrough.ts (the browser walkthrough that also makes docs/screenshots/)
 agents/                   the base specialist registry: one .md per role (frontmatter + prompt + standing-rules block)
 harness/
 ├── bin/harness.ts        the CLI — the dashboard calls the same functions and writes the same files

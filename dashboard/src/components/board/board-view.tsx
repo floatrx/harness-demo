@@ -1,11 +1,15 @@
 'use client';
 
 import {
+  type CollisionDetection,
   DndContext,
   type DragEndEvent,
   DragOverlay,
   KeyboardSensor,
+  MeasuringStrategy,
   PointerSensor,
+  pointerWithin,
+  rectIntersection,
   useSensor,
   useSensors,
 } from '@dnd-kit/core';
@@ -42,6 +46,16 @@ const slotsOf = (columns: Status[], cards: CardModel[]): Slot[] =>
 
 /* Columns are fluid: each populated column takes an equal share (min ~118px), rails stay 24px. The board fits a
    1440px screen with the dock open and grows on wider ones; below its minimum it scrolls sideways. */
+/* The column under the pointer wins. Rect overlap (dnd-kit's default) lets a wide card dropped on a 24 px empty rail
+   land on its own column instead, which overlaps it more. The keyboard has no pointer: it falls back to overlap. */
+const collisionDetection: CollisionDetection = (args) => {
+  const hits = pointerWithin(args);
+  return hits.length ? hits : rectIntersection(args);
+};
+
+/* Empty rails widen once a drag starts; measure the drop targets while dragging, not only before. */
+const MEASURING = { droppable: { strategy: MeasuringStrategy.Always } };
+
 export const BoardView = ({ cards, projectId, selectedId }: Props) => {
   const router = useRouter();
   const [dragged, setDragged] = useState<CardModel | null>(null);
@@ -76,6 +90,8 @@ export const BoardView = ({ cards, projectId, selectedId }: Props) => {
   return (
     <DndContext
       sensors={sensors}
+      collisionDetection={collisionDetection}
+      measuring={MEASURING}
       onDragStart={({ active }) => setDragged((active.data.current as DragData | undefined)?.card ?? null)}
       onDragCancel={() => setDragged(null)}
       onDragEnd={handleDragEnd}
@@ -93,10 +109,12 @@ export const BoardView = ({ cards, projectId, selectedId }: Props) => {
         {PHASES.map((phase) => {
           const slots = slotsOf(phase.columns, cards);
           const populated = slots.filter((slot) => slot.kind === 'column').length;
+          /* min-w-fit: a phase never shrinks below its rails and 118 px columns — narrower, the board scrolls
+             sideways in its own lane instead of drawing one phase over the next. */
           return (
             <div
               key={phase.name}
-              className="flex min-w-0 flex-col gap-1.5"
+              className="flex min-w-fit flex-col gap-1.5"
               style={{ flex: populated ? `${populated} 1 0` : '0 0 auto' }}
             >
               <div className="truncate border-b-2 border-line-soft px-0.5 pb-1 text-[11.5px] font-semibold text-faint">

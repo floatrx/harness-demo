@@ -15,6 +15,7 @@ export const EmptyRail = ({ statuses, names }: Props) => {
     <section
       ref={setNodeRef}
       data-testid="empty-rail"
+      data-statuses={statuses.join(' ')}
       title={`${names.join(', ')} — empty`}
       className={cn(
         'flex min-h-44 w-6 flex-none flex-col items-center gap-2 rounded-panel bg-lane py-2.5 text-[11.5px] text-faint transition',

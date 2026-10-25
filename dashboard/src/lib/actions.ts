@@ -8,9 +8,12 @@
    4. the move is a HUMAN transition the core allows from the task's status (the core throws otherwise).
    Writes are atomic (`saveTask`: temp file + rename). */
 
-import { join } from 'node:path';
+import { homedir } from 'node:os';
+import { isAbsolute, join, resolve } from 'node:path';
 import { loadConfig, transitionContext } from '@harness/core/config';
 import { readRunning, tracePaths } from '@harness/core/paths';
+import { ProjectError, addProject, listProjects, removeProject } from '@harness/core/projects';
+import { lockHolder } from '@harness/core/supervise';
 import { type TaskDoc } from '@harness/core/task/parse';
 import { loadTask, nextTaskId, saveTask } from '@harness/core/task/task';
 import { KINDS, type Kind } from '@harness/core/task/transitions';
@@ -97,6 +100,7 @@ function change(action: TaskAction, doc: TaskDoc, body: Record<string, unknown>,
 function errorResponse(error: unknown): Response {
   if (error instanceof HttpError) return json(error.status, { error: error.message });
   if (error instanceof ProjectNotFound) return json(404, { error: error.message });
+  if (error instanceof ProjectError) return json(400, { error: error.message });
   if (error instanceof TransitionError || error instanceof OwnershipError) return json(409, { error: error.message });
   throw error;
 }
@@ -155,6 +159,39 @@ export async function handleCreateTask(request: Request, projectId: string): Pro
       createTask({ id, title, draft: draft || title, ...(kind ? { kind: kind as Kind } : {}) }),
     );
     return json(201, { id, status: 'draft' });
+  } catch (error) {
+    return errorResponse(error);
+  }
+}
+
+/** POST /api/projects — registers a local git repository and creates `.harness/` in it, as `harness projects add`. */
+export async function handleAddProject(request: Request): Promise<Response> {
+  try {
+    guardHeader(request);
+    const body = await readBody(request);
+    const given = typeof body.path === 'string' ? body.path.trim() : '';
+    const name = typeof body.name === 'string' && body.name.trim() ? body.name.trim() : undefined;
+    if (!given) throw new HttpError(400, 'a project needs a path');
+    const path = given === '~' || given.startsWith('~/') ? join(homedir(), given.slice(1)) : given;
+    /* A relative path would resolve against the dashboard's own folder, which is never what the human meant. */
+    if (!isAbsolute(path)) throw new HttpError(400, 'give an absolute path, or one that starts with ~/');
+    const known = listProjects().some((project) => project.path === resolve(path));
+    const project = addProject(path, name);
+    return json(known ? 200 : 201, project);
+  } catch (error) {
+    return errorResponse(error);
+  }
+}
+
+/** POST /api/projects/:id/remove — forgets a project. Its files stay; refused while a supervisor runs it. */
+export async function handleRemoveProject(request: Request, projectId: string): Promise<Response> {
+  try {
+    guardHeader(request);
+    const project = findProject(projectId);
+    const holder = lockHolder(project.path);
+    if (holder) throw new HttpError(409, `a supervisor runs ${project.name} (pid ${holder}); stop it first`);
+    removeProject(project.id);
+    return json(200, { id: project.id, removed: true });
   } catch (error) {
     return errorResponse(error);
   }

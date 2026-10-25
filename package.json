@@ -16,7 +16,8 @@
     "format": "prettier --write .",
     "provenance": "! rg -i 'mgea[r]|bserve[d]|gotenber[g]|FB-[0-9]' --glob '!.work' --glob '!node_modules' .",
     "dashboard": "pnpm -C dashboard dev",
-    "dashboard:seed": "node dashboard/scripts/seed-demo.ts"
+    "dashboard:seed": "node dashboard/scripts/seed-demo.ts",
+    "dashboard:e2e": "node dashboard/e2e/walkthrough.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

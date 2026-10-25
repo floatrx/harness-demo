@@ -94,7 +94,7 @@ export default async function StatsPage({ params }: Props) {
               result (the fake agent does this). Their cost is unknown, not zero.
             </p>
           )}
-          <div className="grid grid-cols-[minmax(0,1fr)_300px] items-start gap-4">
+          <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
             <div className="min-w-0 space-y-4">
               <StatsTable
                 caption="By stage"
@@ -123,7 +123,7 @@ export default async function StatsPage({ params }: Props) {
                 )}
               />
             </div>
-            <aside className="space-y-4">
+            <aside className="grid items-start gap-4 md:grid-cols-2 xl:grid-cols-1">
               <section
                 className="rounded-panel border border-line-soft bg-surface px-4 py-3"
                 data-testid="stats-verdicts"

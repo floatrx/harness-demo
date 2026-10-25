@@ -2,7 +2,7 @@
    statuses, transitions, parsing and the queue all come from @harness/core. */
 
 import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { loadConfig, transitionContext } from '@harness/core/config';
 import { readRunning, tracePaths } from '@harness/core/paths';
 import { type Project, listProjects } from '@harness/core/projects';
@@ -79,6 +79,8 @@ export interface BoardModel {
   project: Project;
   baseBranch: string;
   cards: CardModel[];
+  /** Task files the core could not parse: shown, never silently dropped. */
+  unreadable: { file: string; reason: string }[];
   waiting: CardModel[];
   /** null cost and duration when no unit reported usage (the fake agent reports none). */
   today: { units: number; costUsd: number | null; durationMs: number | null };
@@ -208,10 +210,12 @@ export function loadBoard(id: string): BoardModel {
   const paths = tracePaths(project.path);
   const handoffs = readHandoffs(project.path);
   const running = readRunning(paths);
+  const unreadable: BoardModel['unreadable'] = [];
   const tasks = listTaskFiles(paths.tasks).flatMap((file) => {
     try {
       return [loadTask(file)];
-    } catch {
+    } catch (error) {
+      unreadable.push({ file: basename(file), reason: (error as Error).message });
       return [];
     }
   });
@@ -256,6 +260,7 @@ export function loadBoard(id: string): BoardModel {
     project,
     baseBranch: config.baseBranch,
     cards,
+    unreadable,
     waiting: cards.filter((card) => card.action && card.action !== 'Submit'),
     today: {
       units: todays.length,
