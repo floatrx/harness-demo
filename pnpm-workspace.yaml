@@ -1,3 +1,4 @@
 packages:
   - harness
+  - dashboard
   - examples/app

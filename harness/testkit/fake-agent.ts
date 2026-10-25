@@ -75,6 +75,16 @@ const defaults = {
 process.stdin.resume();
 process.stdin.on('data', () => undefined);
 
+/* A screenshot-sized drawing of a list page with a search box: what a designer's round looks like. */
+const PROTOTYPE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 128" width="300" height="128">
+<rect width="300" height="128" rx="8" fill="#141414"/><rect x="16" y="14" width="120" height="10" rx="3" fill="#e6e6e6"/>
+<rect x="16" y="34" width="268" height="22" rx="6" fill="#1f1f1f" stroke="#d97757"/><circle cx="30" cy="45" r="5" fill="none" stroke="#d97757" stroke-width="1.6"/>
+<rect x="42" y="42" width="70" height="6" rx="3" fill="#6b6b6b"/>
+<rect x="16" y="68" width="190" height="8" rx="3" fill="#8a8a8a"/><rect x="250" y="68" width="34" height="8" rx="3" fill="#4d4d4d"/>
+<rect x="16" y="86" width="160" height="8" rx="3" fill="#8a8a8a"/><rect x="250" y="86" width="34" height="8" rx="3" fill="#4d4d4d"/>
+<rect x="16" y="104" width="176" height="8" rx="3" fill="#8a8a8a"/><rect x="250" y="104" width="34" height="8" rx="3" fill="#4d4d4d"/></svg>
+`;
+
 function nextStep(): Action[] {
   const keys = [`${taskId}:${stage}`, stage];
   const key = keys.find((name) => scenario.steps?.[name]) ?? stage;
@@ -108,13 +118,13 @@ function defaultStep(): void {
       break;
     case 'prototype':
       mkdirSync(artifacts, { recursive: true });
-      writeFileSync(join(artifacts, 'prototype.txt'), `prototype by the fake designer\n`);
+      writeFileSync(join(artifacts, 'prototype.svg'), PROTOTYPE_SVG);
       editTask((doc) => {
         // Like a real designer: rewrite the prototype notes, keep the human-owned `### Review` block.
         const current = getSection(doc, 'Prototype') ?? '';
         const review = reviewBlock(current);
         const round = (current.match(/^Round \d+/gm) ?? []).length + 1;
-        putSection(doc, 'Prototype', normalizeBody(`Round ${round}: see ${taskId}/prototype.txt\n\n${review}`));
+        putSection(doc, 'Prototype', normalizeBody(`Round ${round}: see ${taskId}/prototype.svg\n\n${review}`));
       });
       break;
     case 'implement': {

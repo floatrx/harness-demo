@@ -7,7 +7,11 @@ export const metadata: Metadata = {
   description: 'The example app harness-demo works on.',
 };
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+interface Props {
+  children: ReactNode;
+}
+
+export default function RootLayout({ children }: Props) {
   return (
     <html lang="en">
       <body>{children}</body>

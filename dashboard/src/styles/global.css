@@ -1,0 +1,89 @@
+@import 'tailwindcss';
+@import '@heroui/styles';
+
+@custom-variant dark (&:is(.dark *));
+
+/* D3 "Command center", darker — the decided look (.work/plans/dashboard.md § Look).
+   HeroUI reads its own variable names; ours are mapped onto them so every HeroUI component takes the theme. */
+.dark {
+  --background: #0d0d0d;
+  --foreground: #efefef;
+  --surface: #131313;
+  --surface-foreground: #efefef;
+  --surface-secondary: #1b1b1b;
+  --surface-tertiary: #222222;
+  --overlay: #161616;
+  --muted: #9e9e9e;
+  --default: #1b1b1b;
+  --default-foreground: #efefef;
+  --accent: #d97757;
+  --accent-foreground: #0d0d0d;
+  --accent-soft: rgb(217 119 87 / 0.14);
+  --accent-soft-foreground: #e8957a;
+  --focus: #d97757;
+  --border: #2e2e2e;
+  --separator: #1d1d1d;
+  --danger: #ff6170;
+  --danger-foreground: #0d0d0d;
+  --field-background: #1b1b1b;
+  --radius: 0.5rem;
+}
+
+@theme inline {
+  --font-sans: var(--font-onest), ui-sans-serif, system-ui, sans-serif;
+  --color-rail: #090909;
+  --color-lane: #111111;
+  --color-card: #171717;
+  --color-card-run: #1d1613;
+  --color-faint: #616161;
+  --color-line-soft: #1d1d1d;
+  --color-accent-line: rgb(217 119 87 / 0.5);
+  --color-track: #262626;
+  --color-track-past: #666666;
+  --radius-panel: 10px;
+  --radius-card: 8px;
+}
+
+html {
+  background: var(--background);
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The Claude Code thinking spinner on everything that is working. */
+@keyframes claude-spin {
+  0% {
+    content: '·';
+  }
+  16% {
+    content: '✢';
+  }
+  33% {
+    content: '✳';
+  }
+  50% {
+    content: '✶';
+  }
+  66% {
+    content: '✻';
+  }
+  83% {
+    content: '✽';
+  }
+  100% {
+    content: '·';
+  }
+}
+
+.claude-spinner::before {
+  content: '✻';
+  animation: claude-spin 1.2s steps(1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .claude-spinner::before {
+    animation: none;
+  }
+}
