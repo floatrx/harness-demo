@@ -35,7 +35,9 @@ export type Action =
   | { exit: number }
   | { usageLimit: true }
   /** Prints stream-json like `claude -p`: an optional tool result quoting a specialist, then the final result. */
-  | { stream: { quoted?: string; result: string; tokens?: number } };
+  | { stream: { quoted?: string; result: string; tokens?: number } }
+  /** Prints the stream-json of a coordinator dispatching one specialist, its tool calls (paced), and its result. */
+  | { dispatch: { role: string; calls: { tool: string; file?: string }[]; stepMs?: number } };
 
 export interface Scenario {
   steps?: Record<string, Action[][]>;
@@ -182,6 +184,53 @@ async function play(actions: Action[]): Promise<void> {
           usage: { input_tokens: tokens, output_tokens: Math.round(tokens / 4) },
         }),
       );
+    } else if ('dispatch' in action) {
+      const { role, calls, stepMs = 400 } = action.dispatch;
+      const agentId = `toolu_fake_${role}_${Date.now().toString(36)}`;
+      const emit = (event: Record<string, unknown>) => console.log(JSON.stringify(event));
+      emit({
+        type: 'assistant',
+        parent_tool_use_id: null,
+        message: {
+          content: [
+            {
+              type: 'tool_use',
+              id: agentId,
+              name: 'Agent',
+              input: { subagent_type: role, description: `${role} for ${taskId}` },
+            },
+          ],
+        },
+      });
+      for (const [index, call] of calls.entries()) {
+        await new Promise((resolve) => setTimeout(resolve, stepMs));
+        const id = `${agentId}_${index}`;
+        emit({
+          type: 'assistant',
+          parent_tool_use_id: agentId,
+          message: {
+            content: [
+              {
+                type: 'tool_use',
+                id,
+                name: call.tool,
+                input: call.file ? { file_path: join(project, call.file) } : {},
+              },
+            ],
+          },
+        });
+        emit({
+          type: 'user',
+          parent_tool_use_id: agentId,
+          message: { content: [{ type: 'tool_result', tool_use_id: id, content: 'ok' }] },
+        });
+      }
+      await new Promise((resolve) => setTimeout(resolve, stepMs));
+      emit({
+        type: 'user',
+        parent_tool_use_id: null,
+        message: { content: [{ type: 'tool_result', tool_use_id: agentId, content: `${role} done` }] },
+      });
     } else if ('usageLimit' in action) {
       console.error('Claude AI usage limit reached. Your limit will reset at 5pm.');
       process.exit(1);

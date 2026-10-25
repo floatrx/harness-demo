@@ -18,6 +18,7 @@ over task files in a project's `.harness/tasks/`. Code-owned contracts check eve
 | What the next unit would get | `node harness/bin/harness.ts preview T-001 --project <path>` (no tokens) |
 | Dashboard | `pnpm dashboard` → http://127.0.0.1:4777 (`HARNESS_HOME` picks the registry) |
 | Demo data for the dashboard | `HARNESS_HOME=/tmp/h/home pnpm dashboard:seed /tmp/h/bookmarks` (fake agent, zero tokens) |
+| Live demo, zero tokens | start the dashboard with `AGENT_CMD="node $PWD/harness/testkit/fake-agent.ts"` (and optionally `HARNESS_FAKE_SCENARIO`) — the supervisor it starts inherits both |
 
 Node 26 is required (`.nvmrc`). It runs the TypeScript in `harness/` directly by type stripping — there is no build.
 

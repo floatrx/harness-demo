@@ -617,7 +617,13 @@ function spawnAgent(input: SpawnInput): Promise<AgentRun> {
     const record = (stream: 'stdout' | 'stderr', chunk: string) => {
       for (const line of chunk.split('\n')) {
         if (!line) continue;
-        trace.write(isJsonObject(line) ? `${line}\n` : `${JSON.stringify({ type: 'text', stream, text: line })}\n`);
+        /* Every line carries the time it arrived (stream-json events have none), so a viewer can time each agent. */
+        const ts = new Date().toISOString();
+        trace.write(
+          isJsonObject(line)
+            ? `{"harness_ts":"${ts}"${/^\{\s*\}$/.test(line) ? '' : ','}${line.slice(1)}\n`
+            : `${JSON.stringify({ type: 'text', harness_ts: ts, stream, text: line })}\n`,
+        );
       }
     };
     let output = '';

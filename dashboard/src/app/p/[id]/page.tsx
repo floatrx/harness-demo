@@ -1,7 +1,9 @@
 import { notFound } from 'next/navigation';
 import { cn } from '@/lib/cn';
 import { ProjectNotFound, loadBoard } from '@/lib/board';
+import { liveSnapshot } from '@/lib/live';
 import { loadTaskDetail } from '@/lib/task-detail';
+import { LiveProvider } from '@/components/live/live-provider';
 import { BoardView } from '@/components/board/board-view';
 import { CreateTaskModal } from '@/components/board/create-task-modal';
 import { LiveDock } from '@/components/dock/live-dock';
@@ -29,25 +31,27 @@ export default async function BoardPage({ params, searchParams }: Props) {
   }
   const task = t ? loadTaskDetail(id, t) : null;
   return (
-    <div
-      className={cn(
-        'grid min-h-screen',
-        task ? 'grid-cols-[52px_minmax(0,1fr)_360px]' : 'grid-cols-[52px_minmax(0,1fr)_300px]',
-      )}
-    >
-      <RailNav projectId={id} active="board" />
-      <main className="min-w-0 px-4 pt-3.5 pb-6">
-        <TopLine board={board} />
-        <div className="mb-4 flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-semibold tracking-tight">Board</h1>
-            <WaitingLine waiting={board.waiting} />
+    <LiveProvider projectId={id} initial={liveSnapshot(id)}>
+      <div
+        className={cn(
+          'grid min-h-screen',
+          task ? 'grid-cols-[52px_minmax(0,1fr)_360px]' : 'grid-cols-[52px_minmax(0,1fr)_300px]',
+        )}
+      >
+        <RailNav projectId={id} active="board" />
+        <main className="min-w-0 px-4 pt-3.5 pb-6">
+          <TopLine board={board} />
+          <div className="mb-4 flex items-start justify-between gap-4">
+            <div>
+              <h1 className="text-2xl font-semibold tracking-tight">Board</h1>
+              <WaitingLine waiting={board.waiting} />
+            </div>
+            <CreateTaskModal projectId={id} />
           </div>
-          <CreateTaskModal projectId={id} />
-        </div>
-        <BoardView cards={board.cards} projectId={id} selectedId={task?.id ?? null} />
-      </main>
-      {task ? <TaskDrawer task={task} projectId={id} /> : <LiveDock dock={board.dock} />}
-    </div>
+          <BoardView cards={board.cards} projectId={id} selectedId={task?.id ?? null} />
+        </main>
+        {task ? <TaskDrawer task={task} projectId={id} /> : <LiveDock projectId={id} />}
+      </div>
+    </LiveProvider>
   );
 }
