@@ -14,12 +14,15 @@ over task files in a project's `.harness/tasks/`. Code-owned contracts check eve
 | Contract self-test | `node harness/bin/harness.ts self-test` |
 | CLI help | `node harness/bin/harness.ts --help` |
 | Provenance check | `pnpm provenance` |
+| Agents: list, check, sync rules | `node harness/bin/harness.ts agents --check` · `… agents --sync` |
+| What the next unit would get | `node harness/bin/harness.ts preview T-001 --project <path>` (no tokens) |
 
 Node 26 is required (`.nvmrc`). It runs the TypeScript in `harness/` directly by type stripping — there is no build.
 
 ## Layout
 
 ```
+agents/                   the base specialist registry: one .md per role (frontmatter + prompt + standing-rules block)
 harness/
 ├── bin/harness.ts        the CLI — the dashboard calls the same functions and writes the same files
 ├── task/                 parse · write (owned sections, human actions) · transitions · validate · yaml
@@ -27,6 +30,9 @@ harness/
 ├── runner.ts             one unit: pick → branch → snapshot → spawn → contracts → transition → commit
 ├── supervise.ts          policy over time: lock, PAUSE/STOP files, exit codes, barren stop, usage-limit wait
 ├── queue.ts              the pure "what next" predicate
+├── agents.ts             registry merge (base + <project>/.claude/agents), standing-rules drift/sync, --agents JSON
+├── memory.ts             the "## Memory" block of a unit's prompt: measured facts first, then the journal tail
+├── prompts/              one coordinator prompt per stage + STANDING-RULES.md (the single source of the rules)
 ├── projects.ts           ~/.harness/projects.json registry ($HARNESS_HOME overrides) and project init
 ├── config.ts · paths.ts · git.ts
 ├── selftest.ts           every contract case on a throwaway repo (shared by the CLI and node:test)
@@ -46,6 +52,9 @@ harness/
 - **Every file write the dashboard or CLI makes is atomic** (`atomicWrite`: temp file + rename).
 - **Human and agent transitions are separate sets** (`HUMAN_TRANSITIONS`, `AGENT_TRANSITIONS`). The dashboard may
   only offer the human set.
+- **Standing rules live in one file**, `harness/prompts/STANDING-RULES.md`. Edit it there, then run
+  `harness agents --sync`; a drifted copy in `agents/*.md` refuses every run (exit 2).
+- **The judge is never on the same model as the implementer or the tester** — checked at every unit.
 - Code comments and docs in English.
 
 ## Provenance — this repository is public

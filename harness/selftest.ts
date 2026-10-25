@@ -1,7 +1,8 @@
 // Contract self-test: every case runs the real runner and supervisor on a throwaway project with the
 // fake agent. Shared by `harness self-test` and `node --test`.
 
-import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
+import { appendFileSync, cpSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { baseAgentsDir } from './agents.ts';
 import { join } from 'node:path';
 import { dirty } from './git.ts';
 import { type UnitResult, runUnit } from './runner.ts';
@@ -262,6 +263,83 @@ export const CASES: Case[] = [
         expect(left.length === 0, `dirty: ${left.map((entry) => entry.path).join(', ')}`);
         expect(sandbox.task(id).fields.status === 'implementing', `status ${sandbox.task(id).fields.status}`);
         return `exit 4 · ${result.message}`;
+      }),
+  },
+  {
+    name: "stream-json: the verdict is the coordinator's final result, not a quoted specialist",
+    run: () =>
+      withSandbox({}, async (sandbox) => {
+        const id = seedTask(sandbox, READY);
+        sandbox.scenario({
+          steps: {
+            qa: [
+              [
+                {
+                  stream: { quoted: 'specialist says qa: PASS', result: 'Criterion 1 is red.\nqa: FAIL', tokens: 4200 },
+                },
+              ],
+            ],
+          },
+        });
+        await supervise(sandbox.project, { ...sandbox.agent, onceThrough: true, maxUnits: 2 });
+        const task = sandbox.task(id).fields;
+        expect(task.status === 'implementing' && task.bounces === 1, `status ${task.status} bounces ${task.bounces}`);
+        const handoffs = readFileSync(join(sandbox.project, '.harness/trace/handoffs.jsonl'), 'utf8');
+        expect(/"usage":\{"inputTokens":4200/.test(handoffs), 'usage not recorded in handoffs.jsonl');
+        return `qa: FAIL read from the result event · bounce 1 · usage 4200 input tokens recorded`;
+      }),
+  },
+  {
+    name: 'standing rules: a drifted copy in an agent file refuses the run (exit 2)',
+    run: () =>
+      withSandbox({}, async (sandbox) => {
+        seedTask(sandbox, READY);
+        const base = join(sandbox.root, 'agents');
+        cpSync(baseAgentsDir(), base, { recursive: true });
+        const file = join(base, 'implementer.md');
+        writeFileSync(file, readFileSync(file, 'utf8').replace('Do not commit, push', 'Commit when you like, push'));
+        const previous = process.env.HARNESS_AGENTS_DIR;
+        process.env.HARNESS_AGENTS_DIR = base;
+        try {
+          const result = await runUnit(sandbox.project, sandbox.agent);
+          expect(
+            result.exit === 2 && /standing rules drifted/.test(result.message),
+            `exit ${result.exit}: ${result.message}`,
+          );
+          expect(sandbox.task('T-001').fields.status === 'ready', 'the task moved');
+          return `exit 2 · ${result.message}`;
+        } finally {
+          if (previous === undefined) delete process.env.HARNESS_AGENTS_DIR;
+          else process.env.HARNESS_AGENTS_DIR = previous;
+        }
+      }),
+  },
+  {
+    name: "models: a judge on the implementer's model refuses the run (exit 2)",
+    run: () =>
+      withSandbox({ roles: { models: { judge: 'sonnet' } } }, async (sandbox) => {
+        seedTask(sandbox, READY);
+        const result = await runUnit(sandbox.project, sandbox.agent);
+        expect(
+          result.exit === 2 && /judge and implementer share/.test(result.message),
+          `exit ${result.exit}: ${result.message}`,
+        );
+        return `exit 2 · ${result.message}`;
+      }),
+  },
+  {
+    name: 'merged review: qa PASS closes the task, and the closing contract still runs',
+    run: () =>
+      withSandbox({ roles: { mergeQaJudge: true } }, async (sandbox) => {
+        const green = seedTask(sandbox, { ...READY, id: 'T-001' });
+        const red = seedTask(sandbox, { ...READY, id: 'T-002', closes: ['test -f src/missing.txt'] });
+        await supervise(sandbox.project, { ...sandbox.agent, onceThrough: true, maxUnits: 4 });
+        const a = sandbox.task(green).fields;
+        const b = sandbox.task(red).fields;
+        expect(a.status === 'done', `T-001 ${a.status}`);
+        expect(!/judge/.test(statusTrail(readLog(sandbox, green))), 'a judge stage ran under merged review');
+        expect(b.status === 'implementing' && b.bounces === 1, `T-002 ${b.status} bounces ${b.bounces}`);
+        return `T-001 qa→done (no judge unit) · T-002 qa PASS overruled by a red [closes] → implementing`;
       }),
   },
   {

@@ -20,6 +20,8 @@ export function tracePaths(project: string) {
     handoffs: join(dir, 'handoffs.jsonl'),
     unitSeq: join(dir, 'unit-seq'),
     unit: (n: number) => join(dir, `unit-${String(n).padStart(4, '0')}.jsonl`),
+    /** The `claude --agents` JSON a unit received. */
+    agents: (n: number) => join(dir, `unit-${String(n).padStart(4, '0')}.agents.json`),
   };
 }
 

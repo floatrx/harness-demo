@@ -30,7 +30,16 @@ export interface HarnessConfig {
   /** Required verdict per stage. A unit of that stage without the token fails the trace contract. */
   verdicts: Partial<Record<UnitStage, VerdictRule>>;
   deliver: { pr: boolean };
-  agent: { command: string | null };
+  agent: {
+    /** A shell command that replaces `claude` (the fake agent, a wrapper). null = the built-in `claude -p`. */
+    command: string | null;
+    /** `claude --permission-mode`. `dontAsk` denies anything not allowed below instead of waiting for a human. */
+    permissionMode: string;
+    /** `claude --allowedTools` for every unit. Commits and pushes are absent on purpose: a second fence. */
+    allowedTools: string[];
+    /** `claude --setting-sources`: project settings only, so personal user hooks never fire inside the loop. */
+    settingSources: string;
+  };
   supervisor: {
     barrenUnits: number;
     idlePollSeconds: number;
@@ -50,9 +59,10 @@ export const DEFAULT_CONFIG: HarnessConfig = {
       writer: 'sonnet',
       planner: 'sonnet',
       designer: 'sonnet',
-      implementer: 'opus',
+      implementer: 'sonnet',
       qa: 'sonnet',
-      judge: 'sonnet',
+      // The judge is a different model from the implementer and the tester on purpose.
+      judge: 'opus',
       delivery: 'haiku',
     },
   },
@@ -64,7 +74,30 @@ export const DEFAULT_CONFIG: HarnessConfig = {
     judge: { token: 'judge', values: ['CONFIRMED', 'REJECTED'] },
   },
   deliver: { pr: false },
-  agent: { command: null },
+  agent: {
+    command: null,
+    permissionMode: 'dontAsk',
+    allowedTools: [
+      'Read',
+      'Grep',
+      'Glob',
+      'Edit',
+      'Write',
+      'Agent',
+      'Task',
+      'TodoWrite',
+      'Bash(git status:*)',
+      'Bash(git diff:*)',
+      'Bash(git log:*)',
+      'Bash(git show:*)',
+      'Bash(ls:*)',
+      'Bash(pnpm:*)',
+      'Bash(npm test:*)',
+      'Bash(npx:*)',
+      'Bash(node:*)',
+    ],
+    settingSources: 'project,local',
+  },
   supervisor: {
     barrenUnits: 3,
     idlePollSeconds: 30,

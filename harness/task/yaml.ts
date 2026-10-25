@@ -28,7 +28,8 @@ export function splitComment(text: string): [string, string | undefined] {
     if (quote) {
       if (ch === '\\' && quote === '"') i++;
       else if (ch === quote) quote = null;
-    } else if (ch === '"' || ch === "'") {
+    } else if ((ch === '"' || ch === "'") && text.slice(0, i).trim() === '') {
+      // Only a quote that opens the value starts a quoted string; `spec'd` is plain text.
       quote = ch;
     } else if (ch === '#' && (i === 0 || /\s/.test(text[i - 1] ?? ''))) {
       return [text.slice(0, i).trimEnd(), text.slice(i)];

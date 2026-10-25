@@ -49,7 +49,9 @@ export function initProject(path: string, overrides: Record<string, unknown> = {
   mkdirSync(join(dir, 'trace'), { recursive: true });
   const config = join(dir, 'config.json');
   if (!existsSync(config)) {
-    const { supervisor: _s, agent: _a, ...shown } = DEFAULT_CONFIG;
+    // Only what a user sets; the rest stays a default in code, so a changed default reaches every project.
+    const { baseBranch, autonomy, limits, gate, probe, deliver } = DEFAULT_CONFIG;
+    const shown = { baseBranch, autonomy, limits, gate, probe, deliver };
     writeFileSync(config, `${JSON.stringify({ ...shown, ...overrides }, null, 2)}\n`);
   }
   const journal = join(dir, 'JOURNAL.md');

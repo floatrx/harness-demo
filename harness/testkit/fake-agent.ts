@@ -33,7 +33,9 @@ export type Action =
   | { exec: string }
   | { sleep: number }
   | { exit: number }
-  | { usageLimit: true };
+  | { usageLimit: true }
+  /** Prints stream-json like `claude -p`: an optional tool result quoting a specialist, then the final result. */
+  | { stream: { quoted?: string; result: string; tokens?: number } };
 
 export interface Scenario {
   steps?: Record<string, Action[][]>;
@@ -156,7 +158,21 @@ async function play(actions: Action[]): Promise<void> {
     else if ('exec' in action) execSync(action.exec, { cwd: project, stdio: 'ignore' });
     else if ('sleep' in action) await new Promise((resolve) => setTimeout(resolve, action.sleep));
     else if ('exit' in action) process.exit(action.exit);
-    else if ('usageLimit' in action) {
+    else if ('stream' in action) {
+      const { quoted, result, tokens = 1000 } = action.stream;
+      if (quoted)
+        console.log(JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', content: quoted }] } }));
+      console.log(
+        JSON.stringify({
+          type: 'result',
+          subtype: 'success',
+          result,
+          num_turns: 3,
+          total_cost_usd: 0,
+          usage: { input_tokens: tokens, output_tokens: Math.round(tokens / 4) },
+        }),
+      );
+    } else if ('usageLimit' in action) {
       console.error('Claude AI usage limit reached. Your limit will reset at 5pm.');
       process.exit(1);
     }

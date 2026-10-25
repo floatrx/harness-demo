@@ -1,3 +1,6 @@
 pnpm-lock.yaml
 .work/
 harness/**/fixtures/
+# Prose read by agents: the standing rules are copied verbatim into agents/*.md and checked for drift.
+agents/
+harness/prompts/

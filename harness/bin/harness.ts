@@ -7,7 +7,8 @@ import { parseArgs } from 'node:util';
 import { loadConfig } from '../config.ts';
 import { readRunning, tracePaths } from '../paths.ts';
 import { addProject, listProjects, removeProject, resolveProject } from '../projects.ts';
-import { describeQueue, runUnit } from '../runner.ts';
+import { describeQueue, previewUnit, runUnit } from '../runner.ts';
+import { baseAgentsDir, loadRegistry, registryProblems, standingRulesDrift, syncStandingRules } from '../agents.ts';
 import { runCases } from '../selftest.ts';
 import { lockHolder, requestPause, requestResume, requestStop, supervise } from '../supervise.ts';
 import { type TaskDoc } from '../task/parse.ts';
@@ -40,6 +41,10 @@ Loop
   harness status [--json]
   harness self-test                                 every contract case on a throwaway repo
 
+Agents and prompts
+  harness agents [--check] [--sync]                 the registry (base + project), drift and model checks
+  harness preview <T-NNN>                           the exact prompt and argv the next unit would get (no tokens)
+
 Every command but projects/self-test takes --project <path|id|name> (default: the current folder).
 Env: AGENT_CMD overrides the agent command (the fake agent: node harness/testkit/fake-agent.ts).
 
@@ -60,6 +65,8 @@ const { values, positionals } = parseArgs({
     draft: { type: 'string' },
     kind: { type: 'string' },
     'once-through': { type: 'boolean' },
+    check: { type: 'boolean' },
+    sync: { type: 'boolean' },
     deadline: { type: 'string' },
     'max-units': { type: 'string' },
     json: { type: 'boolean' },
@@ -216,6 +223,46 @@ async function main(): Promise<void> {
           `${task.id}  ${task.status.padEnd(12)} ${task.title}${task.parked ? `\n        parked: ${task.parked}` : ''}`,
         );
         for (const issue of task.issues) console.log(`        ! ${issue}`);
+      }
+      return;
+    }
+    case 'agents': {
+      if (values.sync) {
+        const changed = syncStandingRules();
+        console.log(changed.length ? `synced ${changed.length} file(s)` : 'every base agent carries the current rules');
+        return;
+      }
+      const root = values.project ? project() : null;
+      const registry = loadRegistry(root);
+      const config = root ? loadConfig(root) : null;
+      for (const agent of registry) {
+        const model = (config?.roles.models as Record<string, string> | undefined)?.[agent.name] ?? agent.model;
+        console.log(
+          `${agent.name.padEnd(12)} ${agent.source.padEnd(8)} ${String(model ?? '-').padEnd(7)} [${agent.stages.join(', ') || 'any'}] ${agent.when}`,
+        );
+      }
+      const drift = standingRulesDrift();
+      const problems = config ? registryProblems(registry, config) : [];
+      console.log(`\nbase: ${baseAgentsDir()}`);
+      for (const path of drift) console.log(`! standing rules drifted: ${path} — run \`harness agents --sync\``);
+      for (const problem of problems) console.log(`! ${problem}`);
+      if (values.check && (drift.length || problems.length)) process.exitCode = 2;
+      else if (values.check) console.log('ok: no drift, no model clash');
+      return;
+    }
+    case 'preview': {
+      const root = project();
+      try {
+        const preview = previewUnit(root, args[0] ?? '');
+        console.log(`# ${preview.task} · stage ${preview.stage} · coordinator ${preview.role}`);
+        console.log(`# specialists: ${preview.specialists.join(', ') || '(none)'}`);
+        console.log(
+          `# argv: ${preview.invocation.file} ${preview.invocation.args.map((arg) => JSON.stringify(arg)).join(' ')}`,
+        );
+        console.log(`# prompt (${preview.prompt.length} chars) — sent on stdin:\n`);
+        console.log(preview.prompt);
+      } catch (error) {
+        fail((error as Error).message, 1);
       }
       return;
     }

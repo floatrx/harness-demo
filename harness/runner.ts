@@ -20,7 +20,17 @@ import {
 import { runClosing } from './contracts/closing.ts';
 import { runGate } from './contracts/gate.ts';
 import { judgeScope, outsideHarness, quarantine, snapshot } from './contracts/scope.ts';
-import { readVerdict } from './contracts/trace.ts';
+import { readUsage, readVerdict } from './contracts/trace.ts';
+import {
+  type AgentDef,
+  agentsForStage,
+  loadRegistry,
+  registryProblems,
+  standingRules,
+  standingRulesDrift,
+  writeAgentsFile,
+} from './agents.ts';
+import { buildMemory } from './memory.ts';
 import { branchExists, currentBranch, dirty, git, head, sh } from './git.ts';
 import {
   type TracePaths,
@@ -31,9 +41,17 @@ import {
   readRunning,
   tracePaths,
 } from './paths.ts';
-import { nextStep } from './queue.ts';
+import { nextStep, stageFor } from './queue.ts';
 import { type TaskDoc, getSection, openQuestions, parseCriteria, parseTask, setField } from './task/parse.ts';
-import { type LoadedTask, listTaskFiles, loadTask, saveTask, slugify, taskFields } from './task/task.ts';
+import {
+  type LoadedTask,
+  type TaskFields,
+  listTaskFiles,
+  loadTask,
+  saveTask,
+  slugify,
+  taskFields,
+} from './task/task.ts';
 import { type Status, findTransition } from './task/transitions.ts';
 import { validateTask } from './task/validate.ts';
 import { appendLog, moveTo, taskWriteViolations } from './task/write.ts';
@@ -69,7 +87,60 @@ const PROMPTS = join(HERE, 'prompts');
 const AGENT_DOWN =
   /usage limit|rate[ -]limit|\b429\b|overloaded|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|not logged in|\/login/i;
 
-export const DEFAULT_AGENT_COMMAND = 'claude -p --output-format stream-json --verbose --model {model}';
+/** How the agent is started: the built-in `claude` argv (no shell), or an override command through `sh -c`. */
+export interface Invocation {
+  file: string;
+  args: string[];
+  /** For logs and errors. */
+  display: string;
+}
+
+export function invocation(
+  config: HarnessConfig,
+  model: string,
+  agentsFile: string,
+  options: Pick<RunOptions, 'agentCommand'> = {},
+): Invocation {
+  const override = options.agentCommand ?? process.env.AGENT_CMD ?? config.agent.command;
+  if (override) {
+    const command = override.replaceAll('{model}', model);
+    return { file: 'sh', args: ['-c', command], display: command };
+  }
+  const args = [
+    '-p',
+    '--output-format',
+    'stream-json',
+    '--verbose',
+    '--model',
+    model,
+    '--permission-mode',
+    config.agent.permissionMode,
+    '--setting-sources',
+    config.agent.settingSources,
+    '--agents',
+    agentsFile,
+    // Variadic: it must stay last.
+    '--allowedTools',
+    ...config.agent.allowedTools,
+  ];
+  return { file: 'claude', args, display: `claude ${args.slice(0, 13).join(' ')} --allowedTools …` };
+}
+
+/** The stage's specialists; under merged review the qa unit also gets the judge. */
+export function stageSpecialists(registry: readonly AgentDef[], stage: UnitStage, config: HarnessConfig): AgentDef[] {
+  const agents = agentsForStage(registry, stage);
+  if (stage !== 'qa' || !config.roles.mergeQaJudge) return agents;
+  return [...agents, ...registry.filter((agent) => agent.name === 'judge' && !agents.includes(agent))];
+}
+
+function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
 
 // ---------------------------------------------------------------------------
 
@@ -88,8 +159,26 @@ export async function runUnit(project: string, options: RunOptions = {}): Promis
     throw error;
   }
   const running = readRunning(paths);
-  if (running)
+  if (running && alive(running.pid))
     return { exit: EXIT.config, message: `a unit is already running: ${running.task} ${running.stage}`, moved: false };
+  // A running.json whose process is gone is left by a crash: the tree check below catches its dirt.
+  if (running) rmSync(paths.running, { force: true });
+
+  const drift = standingRulesDrift();
+  if (drift.length)
+    return {
+      exit: EXIT.config,
+      message: `standing rules drifted in ${drift.length} agent file(s) — run \`harness agents --sync\``,
+      moved: false,
+    };
+  let registry: AgentDef[];
+  try {
+    registry = loadRegistry(project);
+  } catch (error) {
+    return { exit: EXIT.config, message: (error as Error).message, moved: false };
+  }
+  const problems = registryProblems(registry, config);
+  if (problems.length) return { exit: EXIT.config, message: problems.join('; '), moved: false };
 
   if (config.probe) {
     const probe = sh(config.probe, project);
@@ -131,7 +220,7 @@ export async function runUnit(project: string, options: RunOptions = {}): Promis
 
   const task = loaded.find((item) => item.fields.id === step.task.id) as LoadedTask;
   if (step.kind === 'advance') return advance(project, paths, task, step.action, step.target, say);
-  return agentUnit(project, paths, config, task, step.stage, options, say);
+  return agentUnit(project, paths, config, registry, task, step.stage, options, say);
 }
 
 function advance(
@@ -173,6 +262,7 @@ async function agentUnit(
   project: string,
   paths: TracePaths,
   config: HarnessConfig,
+  registry: readonly AgentDef[],
   task: LoadedTask,
   stage: UnitStage,
   options: RunOptions,
@@ -222,11 +312,18 @@ async function agentUnit(
   );
   say(`unit ${unit} · ${id} · ${stage} · ${role} · start`);
 
+  const specialists = stageSpecialists(registry, stage, config);
+  const agentsFile = paths.agents(unit);
+  writeAgentsFile(agentsFile, specialists, config);
+  const model = config.roles.models[role] ?? 'sonnet';
+  const how = invocation(config, model, agentsFile, options);
+  const memory = buildMemory(project, paths, task.fields, stage, config.baseBranch);
+
   let run: AgentRun;
   try {
     run = await spawnAgent({
-      command: agentCommand(config, role, options),
-      prompt: buildPrompt(stage, role, task, taskRel, branch, artifacts, config),
+      invocation: how,
+      prompt: buildPrompt({ stage, role, task: task.fields, taskRel, branch, artifacts, config, specialists, memory }),
       cwd: project,
       tracePath: paths.unit(unit),
       timeoutMs: config.limits.unitTimeoutMinutes * 60_000,
@@ -242,6 +339,7 @@ async function agentUnit(
         HARNESS_UNIT: String(unit),
         HARNESS_BRANCH: branch,
         HARNESS_ARTIFACTS: join(project, artifacts),
+        HARNESS_AGENTS_FILE: agentsFile,
         CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1',
       },
     });
@@ -252,10 +350,10 @@ async function agentUnit(
   const base = { task: id, stage, unit, from: status } as const;
 
   // -- the agent command does not exist: configuration, waiting fixes nothing.
-  if (run.code === 127) {
+  if (run.code === 127 || /ENOENT/.test(run.spawnError ?? '')) {
     const note = quarantine(project, before, `${id} unit ${unit}`, [], []);
     writeFileSync(task.path, beforeText);
-    const message = `agent command not found: ${lastLine(run.output) || agentCommand(config, role, options)}`;
+    const message = `agent command not found: ${lastLine(run.output) || how.display}`;
     say(`unit ${unit} · ${id} · exit 2 · ${message}${note ? ` · ${note}` : ''}`);
     return { ...base, exit: EXIT.config, message, to: status, moved: false };
   }
@@ -305,7 +403,7 @@ async function agentUnit(
     if (note) appendLog(doc, `  ↳ quarantine: ${note}`);
     saveTask(task.path, doc);
     say(`unit ${unit} · ${id} · exit 1 · parked · ${reasons.join('; ')}`);
-    appendHandoff(paths, { ...base, to: 'parked', exit: EXIT.hardStop, reason });
+    appendHandoff(paths, { ...base, to: 'parked', exit: EXIT.hardStop, reason, usage: readUsage(run.output) });
     return { ...base, exit: EXIT.hardStop, message: reason, to: 'parked', moved: true };
   };
   if (violations.length) return park(violations, true);
@@ -384,9 +482,14 @@ async function agentUnit(
       break;
     }
     case 'qa': {
-      if (verdict.verdict === 'PASS')
+      if (verdict.verdict === 'PASS') {
         target = findTransition(taskFields(doc), 'agent', 'qa-pass', ctx)?.target ?? 'judge';
-      else if (verdict.verdict === 'FAIL') target = bounce('qa-fail', 'qa: FAIL');
+        // Merged review closes the task here, so the closing contract runs here too.
+        if (target === 'done') {
+          const closing = runClosing(project, parseCriteria(getSection(doc, 'Acceptance criteria')));
+          if (!closing.ok) target = bounce('qa-fail', `qa PASS but ${closing.reason}`);
+        }
+      } else if (verdict.verdict === 'FAIL') target = bounce('qa-fail', 'qa: FAIL');
       else return park(['qa: CANNOT_VERIFY'], false);
       break;
     }
@@ -407,7 +510,14 @@ async function agentUnit(
   saveTask(task.path, doc);
   const message = `${status} → ${target}${commit ? ` · commit ${commit.slice(0, 7)}` : ''}`;
   say(`unit ${unit} · ${id} · ${stage} · exit 0 · ${message}`);
-  appendHandoff(paths, { ...base, to: target, exit: EXIT.done, commit: commit ?? null, verdict: verdict.verdict });
+  appendHandoff(paths, {
+    ...base,
+    to: target,
+    exit: EXIT.done,
+    commit: commit ?? null,
+    verdict: verdict.verdict,
+    usage: readUsage(run.output),
+  });
   const moved = target !== status || Boolean(commit) || stage === 'prototype';
   return { ...base, exit: EXIT.done, message, to: target, ...(commit ? { commit } : {}), moved };
 }
@@ -425,43 +535,64 @@ function commitUnit(project: string, files: readonly string[], message: string):
   return head(project);
 }
 
-function agentCommand(config: HarnessConfig, role: string, options: RunOptions): string {
-  const command = options.agentCommand ?? process.env.AGENT_CMD ?? config.agent.command ?? DEFAULT_AGENT_COMMAND;
-  const model = config.roles.models[role as keyof HarnessConfig['roles']['models']] ?? 'sonnet';
-  return command.replaceAll('{model}', model);
-}
-
 function lastLine(text: string): string {
   return text.trimEnd().split('\n').at(-1)?.slice(0, 200) ?? '';
 }
 
-export function buildPrompt(
-  stage: UnitStage,
-  role: string,
-  task: LoadedTask,
-  taskRel: string,
-  branch: string,
-  artifacts: string,
-  config: HarnessConfig,
-): string {
-  const read = (name: string) => (existsSync(join(PROMPTS, name)) ? readFileSync(join(PROMPTS, name), 'utf8') : '');
-  const stagePrompt = read(`${stage}.md`) || `You are the ${role} coordinator for the ${stage} stage of a task.\n`;
+export interface PromptInput {
+  stage: UnitStage;
+  role: string;
+  task: TaskFields;
+  taskRel: string;
+  branch: string;
+  artifacts: string;
+  config: HarnessConfig;
+  specialists: readonly AgentDef[];
+  memory: string;
+}
+
+/** Stage prompt + standing rules + the specialists this stage may dispatch + memory + `## This run`. */
+export function buildPrompt(input: PromptInput): string {
+  const { stage, role, task, config } = input;
+  const stagePath = join(PROMPTS, `${stage}.md`);
+  const stagePrompt = existsSync(stagePath)
+    ? readFileSync(stagePath, 'utf8').trim()
+    : `You coordinate the ${stage} stage of a task as the ${role}.`;
   const verdict = config.verdicts[stage];
+  const specialists = input.specialists.length
+    ? input.specialists
+        .map((agent) => `- \`${agent.name}\` — ${agent.when || 'any time'}. ${agent.description}`)
+        .join('\n')
+    : '- (none registered for this stage — do the work yourself)';
   const facts = [
-    `- Task: ${task.fields.id} — ${task.fields.title}`,
-    `- Task file: ${taskRel} (write only the sections your role owns)`,
-    `- Stage: ${stage} · role: ${role} · branch: ${branch}`,
-    `- Scope: ${task.fields.scope.length ? task.fields.scope.join(', ') : '(none yet)'}`,
-    `- Artifacts folder: ${artifacts}/`,
-    `- Bounces so far: ${task.fields.bounces} of ${config.limits.bounces}`,
-    verdict ? `- Required verdict line: \`${verdict.token}: ${verdict.values.join('|')}\`` : '',
-    '- Do not commit, push or switch branches: the runner does that after its checks.',
-  ].filter(Boolean);
-  return `${stagePrompt}\n${read('STANDING-RULES.md')}\n## This run\n\n${facts.join('\n')}\n`;
+    `- Task: ${task.id} — ${task.title} (kind: ${task.kind ?? 'unset'})`,
+    `- Task file: ${input.taskRel}`,
+    `- Stage: ${stage} · you coordinate as: ${role} · branch: ${input.branch} · base: ${config.baseBranch}`,
+    `- Scope: ${task.scope.length ? task.scope.join(', ') : '(none yet — the plan sets it)'}`,
+    `- Gate: ${task.gate ?? config.gate ?? '(none)'}`,
+    `- Artifacts folder: ${input.artifacts}/`,
+    `- Bounces so far: ${task.bounces} of ${config.limits.bounces}`,
+    stage === 'qa' && config.roles.mergeQaJudge
+      ? '- Merged review: there is no judge stage. After qa, dispatch `judge` too and PASS only if it would CONFIRM.'
+      : '',
+    verdict
+      ? `- Required verdict line: \`${verdict.token}: ${verdict.values.join('|')}\``
+      : '- No verdict line is needed.',
+  ];
+  return [
+    stagePrompt,
+    standingRules(),
+    `## Specialists you may dispatch\n\n${specialists}`,
+    input.memory,
+    `## This run\n\n${facts.filter(Boolean).join('\n')}`,
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+    .concat('\n');
 }
 
 interface SpawnInput {
-  command: string;
+  invocation: Invocation;
   prompt: string;
   cwd: string;
   tracePath: string;
@@ -479,7 +610,7 @@ function isJsonObject(line: string): boolean {
   }
 }
 
-/** Spawns the agent through `sh -c`, prompt on stdin, and records every output line to the unit trace. */
+/** Spawns the agent (prompt on stdin) and records every output line to the unit trace. */
 function spawnAgent(input: SpawnInput): Promise<AgentRun> {
   return new Promise((resolve) => {
     const trace = createWriteStream(input.tracePath, { flags: 'a' });
@@ -492,7 +623,7 @@ function spawnAgent(input: SpawnInput): Promise<AgentRun> {
     let output = '';
     let timedOut = false;
     let spawnError: string | null = null;
-    const child = spawn('sh', ['-c', input.command], {
+    const child = spawn(input.invocation.file, input.invocation.args, {
       cwd: input.cwd,
       env: input.env,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -523,6 +654,56 @@ function spawnAgent(input: SpawnInput): Promise<AgentRun> {
       trace.end(() => resolve({ code: code ?? (spawnError ? 127 : 1), output, timedOut, spawnError }));
     });
   });
+}
+
+export interface Preview {
+  task: string;
+  stage: UnitStage;
+  role: string;
+  invocation: Invocation;
+  specialists: string[];
+  prompt: string;
+}
+
+/**
+ * What the next unit for a task would receive — stage, argv, specialists, the full prompt — without running
+ * anything, switching a branch or spending a token. The agents JSON is written to `trace/preview.agents.json`.
+ */
+export function previewUnit(project: string, id: string): Preview {
+  const config = loadConfig(project);
+  const paths = tracePaths(project);
+  ensureTrace(paths);
+  const task = loadTask(join(paths.tasks, `${id}.md`));
+  const stage = stageFor(task.fields);
+  if (!stage) throw new ConfigError(`${id} is in ${task.fields.status}: no agent unit runs there`);
+  const role = STAGE_ROLE[stage];
+  const registry = loadRegistry(project);
+  const specialists = stageSpecialists(registry, stage, config);
+  const agentsFile = join(paths.dir, 'preview.agents.json');
+  writeAgentsFile(agentsFile, specialists, config);
+  const branch =
+    stage === 'spec' || stage === 'plan'
+      ? config.baseBranch
+      : (task.fields.branch ?? `harness/${id}-${slugify(task.fields.title)}`);
+  const memory = buildMemory(project, paths, task.fields, stage, config.baseBranch);
+  return {
+    task: id,
+    stage,
+    role,
+    invocation: invocation(config, config.roles.models[role] ?? 'sonnet', agentsFile),
+    specialists: specialists.map((agent) => agent.name),
+    prompt: buildPrompt({
+      stage,
+      role,
+      task: task.fields,
+      taskRel: relative(project, task.path),
+      branch,
+      artifacts: `.harness/artifacts/${id}`,
+      config,
+      specialists,
+      memory,
+    }),
+  };
 }
 
 /** For `harness status`: the snapshot of the queue without running anything. */

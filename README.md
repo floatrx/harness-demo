@@ -41,6 +41,13 @@ node harness/bin/harness.ts run --project ~/code/my-app --once-through   # imple
 
 Set `"autonomy": { "mode": "full" }` in `.harness/config.json` to skip the plan and prototype approvals.
 
+See exactly what a real unit would receive — the argv for `claude -p` and the full prompt — without spending a token:
+
+```bash
+node harness/bin/harness.ts preview T-001 --project ~/code/my-app
+node harness/bin/harness.ts agents --check --project ~/code/my-app
+```
+
 ## How a task moves
 
 `draft → spec → plan → planned → [prototype] → ready → implementing → qa → judge → done → delivered`,
