@@ -22,6 +22,8 @@ Node 26 is required (`.nvmrc`). It runs the TypeScript in `harness/` directly by
 ## Layout
 
 ```
+examples/app/             the example project TEMPLATE (Next.js bookmarks + .harness/ config and 3 seed tasks);
+                          never driven in place — `harness example <dest>` makes a standalone git copy
 agents/                   the base specialist registry: one .md per role (frontmatter + prompt + standing-rules block)
 harness/
 ├── bin/harness.ts        the CLI — the dashboard calls the same functions and writes the same files
@@ -34,6 +36,7 @@ harness/
 ├── memory.ts             the "## Memory" block of a unit's prompt: measured facts first, then the journal tail
 ├── prompts/              one coordinator prompt per stage + STANDING-RULES.md (the single source of the rules)
 ├── projects.ts           ~/.harness/projects.json registry ($HARNESS_HOME overrides) and project init
+├── example.ts            `harness example <dest>`: copy the template, git init, install, first commit, register
 ├── config.ts · paths.ts · git.ts
 ├── selftest.ts           every contract case on a throwaway repo (shared by the CLI and node:test)
 └── testkit/              fake-agent.ts (scripted stand-in for `claude -p`) · sandbox.ts (temp git repo)
@@ -47,6 +50,8 @@ harness/
 - **`harness/` has zero runtime dependencies.** Dev dependencies only (TypeScript, ESLint, Prettier, types).
 - **The agent is the least trusted part.** A rule that matters is a contract in code, not a sentence in a prompt.
 - **Narrow every check.** A check must not fail a unit for a defect the unit did not cause (see `contracts/gate.ts`).
+- **`examples/app` is a template, not a project.** The loop needs its own git repository (it branches and commits),
+  so never run it with `--project examples/app`; keep the template green (`pnpm -C examples/app typecheck && … test`).
 - **Loop tests never touch a real project.** They run on `makeSandbox()` — a temp git repo with a bare `origin` —
   and set `HARNESS_HOME` when they need the registry. Never point a test at `examples/`.
 - **Every file write the dashboard or CLI makes is atomic** (`atomicWrite`: temp file + rename).

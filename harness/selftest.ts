@@ -1,7 +1,12 @@
 // Contract self-test: every case runs the real runner and supervisor on a throwaway project with the
 // fake agent. Shared by `harness self-test` and `node --test`.
 
-import { appendFileSync, cpSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { loadConfig } from './config.ts';
+import { createExample } from './example.ts';
+import { listProjects } from './projects.ts';
+import { validateTask } from './task/validate.ts';
 import { baseAgentsDir } from './agents.ts';
 import { join } from 'node:path';
 import { dirty } from './git.ts';
@@ -9,7 +14,7 @@ import { type UnitResult, runUnit } from './runner.ts';
 import { supervise } from './supervise.ts';
 import { type Sandbox, makeSandbox, readLog, seedTask } from './testkit/sandbox.ts';
 import { accept, addReview, answerQuestion, approve, comment, submit } from './task/write.ts';
-import { loadTask, saveTask } from './task/task.ts';
+import { listTaskFiles, loadTask, saveTask } from './task/task.ts';
 
 export interface Case {
   name: string;
@@ -341,6 +346,48 @@ export const CASES: Case[] = [
         expect(b.status === 'implementing' && b.bounces === 1, `T-002 ${b.status} bounces ${b.bounces}`);
         return `T-001 qa→done (no judge unit) · T-002 qa PASS overruled by a red [closes] → implementing`;
       }),
+  },
+  {
+    name: 'example: `harness example` makes a clean, registered, standalone project with three valid seeds',
+    run: async () => {
+      const root = mkdtempSync(join(tmpdir(), 'harness-example-'));
+      const saved = { ...process.env };
+      Object.assign(process.env, {
+        HARNESS_HOME: join(root, 'home'),
+        GIT_AUTHOR_NAME: 'Harness Test',
+        GIT_AUTHOR_EMAIL: 'harness-test@example.invalid',
+        GIT_COMMITTER_NAME: 'Harness Test',
+        GIT_COMMITTER_EMAIL: 'harness-test@example.invalid',
+      });
+      try {
+        const dest = join(root, 'bookmarks');
+        const project = createExample(dest, { install: false });
+        expect(project.path === dest && listProjects().some((item) => item.path === dest), 'not registered');
+        const left = dirty(dest);
+        expect(left.length === 0, `dirty after create: ${left.map((entry) => entry.path).join(', ')}`);
+        const seeds = listTaskFiles(join(dest, '.harness/tasks')).map((file) => loadTask(file));
+        expect(seeds.length === 3, `${seeds.length} seeds`);
+        for (const seed of seeds)
+          expect(validateTask(seed.doc).length === 0, `${seed.fields.id}: ${JSON.stringify(validateTask(seed.doc))}`);
+        expect(
+          seeds.map((seed) => `${seed.fields.id}:${seed.fields.kind}`).join(' ') === 'T-001:ui T-002:logic T-003:null',
+          'seed kinds',
+        );
+        expect(loadConfig(dest).gate === 'pnpm typecheck && pnpm test', 'example gate');
+        let refused = '';
+        try {
+          createExample(dest, { install: false });
+        } catch (error) {
+          refused = (error as Error).message;
+        }
+        expect(/not empty/.test(refused), 'a non-empty destination was accepted');
+        return `1 commit, clean tree, registered, seeds T-001 ui · T-002 logic · T-003 vague, non-empty dest refused`;
+      } finally {
+        for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
+        Object.assign(process.env, saved);
+        rmSync(root, { recursive: true, force: true });
+      }
+    },
   },
   {
     name: 'supervisor: usage limit waits and retries, then the unit completes',

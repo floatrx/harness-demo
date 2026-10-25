@@ -1,2 +1,3 @@
 packages:
   - harness
+  - examples/app

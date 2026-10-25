@@ -22,6 +22,8 @@ export interface UnitUsage {
   costUsd: number | null;
   durationMs: number | null;
   turns: number | null;
+  /** Tool calls the permission mode refused — a hint for tuning `agent.allowedTools`. */
+  permissionDenials: string[];
 }
 
 interface ResultEvent {
@@ -30,6 +32,7 @@ interface ResultEvent {
   total_cost_usd?: number;
   duration_ms?: number;
   num_turns?: number;
+  permission_denials?: { tool_name?: string; tool_input?: { command?: string } }[];
   usage?: {
     input_tokens?: number;
     output_tokens?: number;
@@ -80,5 +83,8 @@ export function readUsage(output: string): UnitUsage | null {
     costUsd: event.total_cost_usd ?? null,
     durationMs: event.duration_ms ?? null,
     turns: event.num_turns ?? null,
+    permissionDenials: (event.permission_denials ?? []).map(
+      (denial) => `${denial.tool_name ?? '?'}${denial.tool_input?.command ? `(${denial.tool_input.command})` : ''}`,
+    ),
   };
 }

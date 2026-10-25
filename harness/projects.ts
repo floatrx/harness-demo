@@ -39,8 +39,12 @@ export class ProjectError extends Error {
   override name = 'ProjectError';
 }
 
-/** Lines the project's .gitignore must carry: loop state is local, never versioned. */
-export const IGNORED = ['.harness/trace/', '.harness/artifacts/'];
+/**
+ * Lines the project's .gitignore must carry: loop state is local, never versioned. Task files and the journal are
+ * included: the runner writes them while it switches between the base and task branches, and a versioned copy that
+ * differs between branches would make a checkout fail. `config.json` stays versioned.
+ */
+export const IGNORED = ['.harness/trace/', '.harness/artifacts/', '.harness/tasks/', '.harness/JOURNAL.md'];
 
 /** Creates `.harness/` with a default config. Idempotent: an existing config is kept. */
 export function initProject(path: string, overrides: Record<string, unknown> = {}): void {

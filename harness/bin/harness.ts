@@ -10,6 +10,7 @@ import { addProject, listProjects, removeProject, resolveProject } from '../proj
 import { describeQueue, previewUnit, runUnit } from '../runner.ts';
 import { baseAgentsDir, loadRegistry, registryProblems, standingRulesDrift, syncStandingRules } from '../agents.ts';
 import { runCases } from '../selftest.ts';
+import { createExample } from '../example.ts';
 import { lockHolder, requestPause, requestResume, requestStop, supervise } from '../supervise.ts';
 import { type TaskDoc } from '../task/parse.ts';
 import { loadTask, nextTaskId, saveTask } from '../task/task.ts';
@@ -21,6 +22,7 @@ import { transitionContext } from '../config.ts';
 const HELP = `harness — an autonomous task harness for Claude Code
 
 Projects
+  harness example <dest> [--name <name>] [--no-install]   a standalone copy of examples/app, git-initialised and registered
   harness projects list
   harness projects add <path> [--name <name>]      register a git repo, create .harness/ in it
   harness projects remove <id|name>                 unregister (never deletes files)
@@ -66,6 +68,7 @@ const { values, positionals } = parseArgs({
     kind: { type: 'string' },
     'once-through': { type: 'boolean' },
     check: { type: 'boolean' },
+    'no-install': { type: 'boolean' },
     sync: { type: 'boolean' },
     deadline: { type: 'string' },
     'max-units': { type: 'string' },
@@ -126,6 +129,22 @@ async function main(): Promise<void> {
         console.log(`removed ${removed.id} · ${removed.name} (files untouched)`);
       } else {
         for (const item of listProjects()) console.log(`${item.id} · ${item.name} · ${item.path}`);
+      }
+      return;
+    }
+    case 'example': {
+      if (!args[0]) fail('example <dest> [--name <name>] [--no-install]');
+      try {
+        const created = createExample(args[0], {
+          install: !values['no-install'],
+          ...(values.name ? { name: values.name } : {}),
+          log,
+        });
+        console.log(
+          `\nnext:\n  harness submit T-002 --project ${created.name}\n  harness run --project ${created.name} --once-through`,
+        );
+      } catch (error) {
+        fail((error as Error).message);
       }
       return;
     }

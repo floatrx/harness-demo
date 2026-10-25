@@ -118,6 +118,20 @@ describe('parse / write', () => {
     );
   });
 
+  test('criteria tags are read with or without the bold (a real writer drops it)', () => {
+    const criteria = parseCriteria(
+      '1. [found] reads nicer\n2. [closes] only these files: `git diff --name-only main`\n3. **[process]** sign-off',
+    );
+    assert.deepEqual(
+      criteria.map((criterion) => [criterion.tag, criterion.command]),
+      [
+        ['found', null],
+        ['closes', 'git diff --name-only main'],
+        ['process', null],
+      ],
+    );
+  });
+
   test('rejects a file without frontmatter', () => {
     assert.throws(() => parseTask('# no frontmatter\n'));
   });

@@ -193,6 +193,7 @@ test('stream-json: the verdict comes from the final result, not from a specialis
     costUsd: 0.12,
     durationMs: null,
     turns: 7,
+    permissionDenials: [],
   });
   assert.equal(readUsage('qa: PASS'), null);
 });

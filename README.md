@@ -27,26 +27,34 @@ node --test harness/                      # the full test suite
 node harness/bin/harness.ts --help        # the CLI
 ```
 
-Drive a real repository with the scripted fake agent instead of Claude:
+### Try it on the example app
+
+`examples/app` is a small Next.js bookmarks app with three seed tasks: a UI task (exercises the designer),
+a logic task with a test, and a deliberately vague draft (triggers the interview). `harness example` copies it into
+its own git repository — the loop creates branches and commits there, never in this repository — and registers it.
 
 ```bash
-node harness/bin/harness.ts projects add ~/code/my-app
-node harness/bin/harness.ts new --project ~/code/my-app --title "Add a feature file"
-node harness/bin/harness.ts submit T-001 --project ~/code/my-app
+alias harness="node $PWD/harness/bin/harness.ts"
+harness example ~/harness-bookmarks            # copy, git init, pnpm install, first commit, register
+harness submit T-002 --project harness-bookmarks
+
+# Zero tokens: the scripted fake agent plays every role.
 export AGENT_CMD="node $PWD/harness/testkit/fake-agent.ts"
-node harness/bin/harness.ts run --project ~/code/my-app --once-through   # spec → plan → planned, then waits
-node harness/bin/harness.ts approve T-001 --project ~/code/my-app         # the human gate
-node harness/bin/harness.ts run --project ~/code/my-app --once-through   # implement → qa → judge → done
+harness run --project harness-bookmarks --once-through   # spec → plan → planned, then waits for you
+harness approve T-002 --project harness-bookmarks         # the human gate
+harness run --project harness-bookmarks --once-through   # implement → qa → judge → done, one commit
 ```
 
-Set `"autonomy": { "mode": "full" }` in `.harness/config.json` to skip the plan and prototype approvals.
-
-See exactly what a real unit would receive — the argv for `claude -p` and the full prompt — without spending a token:
+Set `"autonomy": { "mode": "full" }` in the project's `.harness/config.json` to skip the plan and prototype
+approvals. Drop `AGENT_CMD` to run real Claude units — first look at exactly what a unit would receive (the argv for
+`claude -p` and the full prompt) without spending a token:
 
 ```bash
-node harness/bin/harness.ts preview T-001 --project ~/code/my-app
-node harness/bin/harness.ts agents --check --project ~/code/my-app
+harness preview T-002 --project harness-bookmarks
+harness agents --check --project harness-bookmarks
 ```
+
+Any other git repository works the same way: `harness projects add <path>`, then `harness new --title "…"`.
 
 ## How a task moves
 

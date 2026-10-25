@@ -230,7 +230,8 @@ export interface Criterion {
   command: string | null;
 }
 
-const CRITERION = /^\s*(\d+)\.\s+\*\*\[(closes|found|process)\]\*\*\s*(.*)$/;
+// `**[closes]**` is the canonical form; a bare `[closes]` is accepted too — real agents drop the bold.
+const CRITERION = /^\s*(\d+)\.\s+(?:\*\*)?\[(closes|found|process)\](?:\*\*)?\s*(.*)$/;
 
 export function parseCriteria(body: string | undefined): Criterion[] {
   if (!body) return [];
