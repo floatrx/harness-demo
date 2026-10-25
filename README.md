@@ -16,6 +16,37 @@ contracts that the code checks — not by instructions the agent may ignore.
 > **Status:** early. The design is done; the code is being written.
 > A step-by-step explanation lives in [floatrx/harness-info](https://github.com/floatrx/harness-info).
 
+## Quickstart (core only, no tokens)
+
+Requires Node 26 and pnpm.
+
+```bash
+pnpm install
+node harness/bin/harness.ts self-test     # every contract case on a throwaway git repo, with a fake agent
+node --test harness/                      # the full test suite
+node harness/bin/harness.ts --help        # the CLI
+```
+
+Drive a real repository with the scripted fake agent instead of Claude:
+
+```bash
+node harness/bin/harness.ts projects add ~/code/my-app
+node harness/bin/harness.ts new --project ~/code/my-app --title "Add a feature file"
+node harness/bin/harness.ts submit T-001 --project ~/code/my-app
+export AGENT_CMD="node $PWD/harness/testkit/fake-agent.ts"
+node harness/bin/harness.ts run --project ~/code/my-app --once-through   # spec → plan → planned, then waits
+node harness/bin/harness.ts approve T-001 --project ~/code/my-app         # the human gate
+node harness/bin/harness.ts run --project ~/code/my-app --once-through   # implement → qa → judge → done
+```
+
+Set `"autonomy": { "mode": "full" }` in `.harness/config.json` to skip the plan and prototype approvals.
+
+## How a task moves
+
+`draft → spec → plan → planned → [prototype] → ready → implementing → qa → judge → done → delivered`,
+with `needs-input` when an agent asks you a question and `parked` when a contract stops a unit.
+A column a human owns (`draft`, `needs-input`, `planned`, prototype review, `parked`) waits for you.
+
 ## License
 
 MIT

@@ -8,3 +8,4 @@ coverage/
 .harness/trace/
 .DS_Store
 *.log
+.harness/artifacts/

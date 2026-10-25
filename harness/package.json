@@ -1,0 +1,19 @@
+{
+  "name": "@harness/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "Zero-dependency task harness core: task model, runner, supervisor, contracts, CLI.",
+  "bin": {
+    "harness": "./bin/harness.ts"
+  },
+  "exports": {
+    "./task/*": "./task/*.ts",
+    "./*": "./*.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "typescript": "~6.0.3"
+  }
+}

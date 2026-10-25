@@ -1,0 +1,28 @@
+{
+  "name": "harness-demo",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=26"
+  },
+  "packageManager": "pnpm@12.8.1",
+  "scripts": {
+    "harness": "node harness/bin/harness.ts",
+    "test": "node --test harness/",
+    "self-test": "node harness/bin/harness.ts self-test",
+    "typecheck": "pnpm -r exec tsc -b",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "provenance": "! rg -i 'mgea[r]|bserve[d]|gotenber[g]|FB-[0-9]' --glob '!.work' --glob '!node_modules' ."
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.6.5",
+    "eslint": "^10.13.0",
+    "jiti": "^2.7.0",
+    "prettier": "^3.9.10",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.72.0"
+  }
+}
