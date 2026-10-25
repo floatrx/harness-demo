@@ -18,8 +18,18 @@ export interface AgentActivity {
   calls: number;
 }
 
+export interface TraceStep {
+  /** 'coordinator' or the dispatching Agent tool_use id (see `agents`). */
+  actor: string;
+  tool: string;
+  file: string | null;
+  at: string | null;
+}
+
 export interface UnitTrace {
   coordinator: { tool: string | null; file: string | null; calls: number };
+  /** Every tool call in order — tool name and file basename only. */
+  steps: TraceStep[];
   agents: AgentActivity[];
   startedAt: string | null;
   lastEventAt: string | null;
@@ -68,6 +78,7 @@ const blocks = <T extends { type: string }>(event: TraceEvent, type: T['type']):
 export function parseUnitTrace(text: string): UnitTrace {
   const trace: UnitTrace = {
     coordinator: { tool: null, file: null, calls: 0 },
+    steps: [],
     agents: [],
     startedAt: null,
     lastEventAt: null,
@@ -111,6 +122,7 @@ export function parseUnitTrace(text: string): UnitTrace {
           trace.coordinator.tool = use.name;
           trace.coordinator.file = null;
           trace.coordinator.calls++;
+          trace.steps.push({ actor: 'coordinator', tool: `${use.name} → ${role}`, file: null, at });
           continue;
         }
         const owner = event.parent_tool_use_id ? agents.get(event.parent_tool_use_id) : undefined;
@@ -118,6 +130,7 @@ export function parseUnitTrace(text: string): UnitTrace {
         target.tool = use.name;
         target.file = fileOf(use.input);
         target.calls++;
+        trace.steps.push({ actor: owner?.id ?? 'coordinator', tool: use.name, file: target.file, at });
       }
     }
     if (event.type === 'user') {

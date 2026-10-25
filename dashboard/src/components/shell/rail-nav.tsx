@@ -1,4 +1,7 @@
+'use client';
+
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/cn';
 import { HarnessMark, RailIcon, type RailIconName } from './rail-icons';
 
@@ -6,8 +9,13 @@ export type RailSection = 'board' | 'live' | 'stats' | 'agents' | 'projects';
 
 interface Props {
   projectId: string | null;
-  active: RailSection;
 }
+
+/* /p/<id> → board, /p/<id>/live → live, … ; anything else → projects. */
+const sectionOf = (pathname: string): RailSection => {
+  const match = /^\/p\/[^/]+(?:\/(live|stats|agents))?/.exec(pathname);
+  return match ? ((match[1] as RailSection | undefined) ?? 'board') : 'projects';
+};
 
 const ITEMS: { section: RailSection; label: string; href: (id: string) => string; icon: RailIconName }[] = [
   { section: 'board', label: 'Board', href: (id) => `/p/${id}`, icon: 'board' },
@@ -22,33 +30,36 @@ const itemClass = (isActive: boolean) =>
     isActive && 'bg-accent-soft text-accent hover:bg-accent-soft hover:text-accent',
   );
 
-export const RailNav = ({ projectId, active }: Props) => (
-  <nav
-    className="sticky top-0 flex h-screen flex-col items-center gap-1.5 border-r border-line-soft bg-rail py-3.5"
-    aria-label="Main"
-  >
-    <Link href="/projects" className="mb-3 text-accent">
-      <HarnessMark />
-    </Link>
-    {projectId &&
-      ITEMS.map((item) => (
-        <Link
-          key={item.section}
-          href={item.href(projectId)}
-          title={item.label}
-          aria-label={item.label}
-          className={itemClass(active === item.section)}
-        >
-          <RailIcon name={item.icon} />
-        </Link>
-      ))}
-    <Link
-      href="/projects"
-      title="Projects"
-      aria-label="Projects"
-      className={cn('mt-auto', itemClass(active === 'projects'))}
+export const RailNav = ({ projectId }: Props) => {
+  const active = sectionOf(usePathname());
+  return (
+    <nav
+      className="sticky top-0 flex h-screen flex-col items-center gap-1.5 border-r border-line-soft bg-rail py-3.5"
+      aria-label="Main"
     >
-      <RailIcon name="projects" />
-    </Link>
-  </nav>
-);
+      <Link href="/projects" className="mb-3 text-accent">
+        <HarnessMark />
+      </Link>
+      {projectId &&
+        ITEMS.map((item) => (
+          <Link
+            key={item.section}
+            href={item.href(projectId)}
+            title={item.label}
+            aria-label={item.label}
+            className={itemClass(active === item.section)}
+          >
+            <RailIcon name={item.icon} />
+          </Link>
+        ))}
+      <Link
+        href="/projects"
+        title="Projects"
+        aria-label="Projects"
+        className={cn('mt-auto', itemClass(active === 'projects'))}
+      >
+        <RailIcon name="projects" />
+      </Link>
+    </nav>
+  );
+};

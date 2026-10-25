@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { clock, usd } from '@/lib/format';
 import { AgentRow } from '@/components/live/agent-row';
 import { useLive } from '@/components/live/live-provider';
@@ -82,7 +83,9 @@ export const LiveDock = ({ projectId }: Props) => {
                 <tr key={`${unit.unit}-${unit.at}`} className="border-b border-line-soft">
                   <td className="w-6 py-1.5 text-muted tabular-nums">{unit.unit}</td>
                   <td className="py-1.5">
-                    <span className="text-muted tabular-nums">{unit.task}</span> {unit.from} → {unit.to}
+                    <Link href={`/p/${projectId}/live?u=${unit.unit}`} className="hover:text-accent">
+                      <span className="text-muted tabular-nums">{unit.task}</span> {unit.from} → {unit.to}
+                    </Link>
                   </td>
                   <td className="py-1.5 text-right text-muted tabular-nums">
                     {unit.usage?.costUsd != null ? usd(unit.usage.costUsd) : '—'}

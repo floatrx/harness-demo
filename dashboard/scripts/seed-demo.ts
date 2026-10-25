@@ -18,29 +18,119 @@ const FAKE = fileURLToPath(new URL('../../harness/testkit/fake-agent.ts', import
 const project = createExample(resolve(dest), { name: 'bookmarks', log: (line) => console.log(line) });
 const tasks = join(project.path, '.harness', 'tasks');
 const scenario = join(project.path, '..', 'seed-scenario.json');
+
+/* Each first unit of a stage dispatches the specialists that stage offers (agents/*.md `stages`) and ends with a
+   stream-json result, so /live has agent lanes and /stats has numbers. The tokens and costs are SYNTHETIC — the fake agent spends nothing; durations are real. */
+type Call = { tool: string; file?: string };
+const crew = (role: string, ...calls: Call[]) => ({ dispatch: { role, calls, stepMs: 140 } });
+const result = (text: string, tokens: number, costUsd: number, denials?: { tool: string; command?: string }[]) => ({
+  stream: { result: text, tokens, costUsd, ...(denials ? { denials } : {}) },
+});
+const read = (file: string): Call => ({ tool: 'Read', file });
+const edit = (file: string): Call => ({ tool: 'Edit', file });
+const bash: Call = { tool: 'Bash' };
+const LIB = 'src/lib/bookmarks.ts';
+const TEST = 'src/lib/bookmarks.test.ts';
+const PAGE = 'src/app/page.tsx';
+const LIST = 'src/components/bookmark-list.tsx';
+
 writeFileSync(
   scenario,
   JSON.stringify({
     defaults: { scope: ['src/**'], closes: 'test -f src/feature.txt' },
     steps: {
+      spec: [
+        [
+          { default: true },
+          crew('writer', read(PAGE), { tool: 'Grep' }, read(LIB), read(LIST)),
+          result('Spec written.', 18_400, 0.19),
+        ],
+      ],
+      plan: [
+        [
+          { default: true },
+          crew('explorer', read(LIB), read(TEST), { tool: 'Glob' }),
+          crew('planner', read(LIB), read(PAGE)),
+          result('Plan written.', 26_100, 0.27),
+        ],
+      ],
+      prototype: [
+        [
+          { default: true },
+          crew('designer', read(PAGE), read('src/app/globals.css'), { tool: 'Write', file: 'prototype.svg' }),
+          result('Round ready.', 34_800, 0.41),
+        ],
+      ],
+      implement: [
+        [
+          { default: true },
+          crew('tester', read(TEST), edit(TEST), bash),
+          crew('implementer', read(LIB), edit(LIB), edit(LIST), bash),
+          result('Implemented.', 61_200, 0.88),
+        ],
+      ],
+      qa: [[{ default: true }, crew('qa', bash, read(TEST), bash), result('qa: PASS', 22_300, 0.24)]],
+      judge: [
+        [
+          { default: true },
+          crew('judge', { tool: 'Bash' }, read(LIB), read(TEST)),
+          result('judge: CONFIRMED', 15_800, 0.31),
+        ],
+      ],
       'T-003:spec': [
         [
           { default: true },
-          { question: 'What should “better” mean first?', options: ['Faster to find a bookmark: search and tags — recommended: the list grows past one screen', 'Nicer to look at: favicons and a denser layout', 'Safer: export and import'] },
-          { question: 'Where should the bookmarks be stored?', options: ['Keep localStorage — recommended: no backend is in scope', 'A JSON file written by a server action'] },
+          {
+            question: 'What should “better” mean first?',
+            options: [
+              'Faster to find a bookmark: search and tags — recommended: the list grows past one screen',
+              'Nicer to look at: favicons and a denser layout',
+              'Safer: export and import',
+            ],
+          },
+          {
+            question: 'Where should the bookmarks be stored?',
+            options: [
+              'Keep localStorage — recommended: no backend is in scope',
+              'A JSON file written by a server action',
+            ],
+          },
+          crew('writer', read(PAGE), read(LIB)),
+          result('Two questions for the human.', 12_900, 0.14),
         ],
       ],
-      'T-005:implement': [[{ default: true }, { append: 'README.md', content: '\nSorted by title.\n' }]],
+      'T-005:implement': [
+        [
+          { default: true },
+          { append: 'README.md', content: '\nSorted by title.\n' },
+          crew('implementer', read(LIB), edit(LIB), { tool: 'Edit', file: 'README.md' }),
+          result('Implemented.', 47_500, 0.66, [
+            { tool: 'Bash', command: 'curl -s https://registry.npmjs.org/sort-by' },
+          ]),
+        ],
+      ],
     },
   }),
 );
 const agent = { agentCommand: `node ${JSON.stringify(FAKE)}`, env: { HARNESS_FAKE_SCENARIO: scenario } };
 
 const extra: Omit<NewTask, 'id'>[] = [
-  { title: 'Show the date a bookmark was added', draft: 'Each bookmark shows when it was added, as “3 days ago”.', kind: 'logic' },
+  {
+    title: 'Show the date a bookmark was added',
+    draft: 'Each bookmark shows when it was added, as “3 days ago”.',
+    kind: 'logic',
+  },
   { title: 'Sort bookmarks by title', draft: 'A toggle sorts the list by title instead of by date.', kind: 'logic' },
-  { title: 'Tag bookmarks and filter by tag', draft: 'Give a bookmark tags and filter the list by one tag.', kind: 'logic' },
-  { title: 'Import bookmarks from a browser export', draft: 'Import the HTML file that browsers export.', kind: 'logic' },
+  {
+    title: 'Tag bookmarks and filter by tag',
+    draft: 'Give a bookmark tags and filter the list by one tag.',
+    kind: 'logic',
+  },
+  {
+    title: 'Import bookmarks from a browser export',
+    draft: 'Import the HTML file that browsers export.',
+    kind: 'logic',
+  },
 ];
 for (const task of extra) {
   const id = nextTaskId(tasks);
@@ -49,7 +139,8 @@ for (const task of extra) {
 
 const path = (id: string) => join(tasks, `${id}.md`);
 const act = (id: string, change: typeof submit) => saveTask(path(id), change(loadTask(path(id)).doc));
-const run = (maxUnits?: number) => supervise(project.path, { ...agent, onceThrough: true, ...(maxUnits ? { maxUnits } : {}) });
+const run = (maxUnits?: number) =>
+  supervise(project.path, { ...agent, onceThrough: true, ...(maxUnits ? { maxUnits } : {}) });
 
 // Each task is driven alone, so the queue's "finish first" order cannot interleave them.
 act('T-002', submit);

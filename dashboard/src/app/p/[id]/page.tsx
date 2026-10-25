@@ -8,7 +8,6 @@ import { BoardView } from '@/components/board/board-view';
 import { CreateTaskModal } from '@/components/board/create-task-modal';
 import { LiveDock } from '@/components/dock/live-dock';
 import { TaskDrawer } from '@/components/drawer/task-drawer';
-import { RailNav } from '@/components/shell/rail-nav';
 import { TopLine } from '@/components/shell/top-line';
 import { WaitingLine } from '@/components/shell/waiting-line';
 
@@ -35,10 +34,9 @@ export default async function BoardPage({ params, searchParams }: Props) {
       <div
         className={cn(
           'grid min-h-screen',
-          task ? 'grid-cols-[52px_minmax(0,1fr)_360px]' : 'grid-cols-[52px_minmax(0,1fr)_300px]',
+          task ? 'grid-cols-[minmax(0,1fr)_360px]' : 'grid-cols-[minmax(0,1fr)_300px]',
         )}
       >
-        <RailNav projectId={id} active="board" />
         <main className="min-w-0 px-4 pt-3.5 pb-6">
           <TopLine board={board} />
           <div className="mb-4 flex items-start justify-between gap-4">

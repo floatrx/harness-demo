@@ -35,7 +35,16 @@ export type Action =
   | { exit: number }
   | { usageLimit: true }
   /** Prints stream-json like `claude -p`: an optional tool result quoting a specialist, then the final result. */
-  | { stream: { quoted?: string; result: string; tokens?: number } }
+  | {
+      stream: {
+        quoted?: string;
+        result: string;
+        tokens?: number;
+        costUsd?: number;
+        /** Tool calls the permission mode refused, as `claude -p` reports them. */
+        denials?: { tool: string; command?: string }[];
+      };
+    }
   /** Prints the stream-json of a coordinator dispatching one specialist, its tool calls (paced), and its result. */
   | { dispatch: { role: string; calls: { tool: string; file?: string }[]; stepMs?: number } };
 
@@ -171,7 +180,7 @@ async function play(actions: Action[]): Promise<void> {
     else if ('sleep' in action) await new Promise((resolve) => setTimeout(resolve, action.sleep));
     else if ('exit' in action) process.exit(action.exit);
     else if ('stream' in action) {
-      const { quoted, result, tokens = 1000 } = action.stream;
+      const { quoted, result, tokens = 1000, costUsd = 0, denials = [] } = action.stream;
       if (quoted)
         console.log(JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', content: quoted }] } }));
       console.log(
@@ -180,8 +189,12 @@ async function play(actions: Action[]): Promise<void> {
           subtype: 'success',
           result,
           num_turns: 3,
-          total_cost_usd: 0,
+          total_cost_usd: costUsd,
           usage: { input_tokens: tokens, output_tokens: Math.round(tokens / 4) },
+          permission_denials: denials.map((denial) => ({
+            tool_name: denial.tool,
+            tool_input: denial.command ? { command: denial.command } : {},
+          })),
         }),
       );
     } else if ('dispatch' in action) {

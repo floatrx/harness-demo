@@ -17,6 +17,7 @@ import {
   type TransitionTask,
 } from '@harness/core/task/transitions';
 import { validateTask } from '@harness/core/task/validate';
+import type { UnitUsage } from '@harness/core/contracts/trace';
 import { prototypeRounds } from '@harness/core/task/write';
 
 export const STAGE_ROLE: Partial<Record<Status, string>> = {
@@ -39,7 +40,8 @@ export interface Handoff {
   commit?: string | null;
   reason?: string;
   verdict?: string | null;
-  usage?: { costUsd?: number | null; durationMs?: number | null; inputTokens?: number; outputTokens?: number } | null;
+  /** From the unit's stream-json result (`readUsage`); null when the agent printed none (the fake agent's plain text). */
+  usage?: Partial<UnitUsage> | null;
 }
 
 export interface CardModel {
@@ -93,6 +95,19 @@ export const findProject = (id: string): Project => {
   return project;
 };
 
+/* A refused command can carry a token or a URL (`Bash(curl -H "Authorization: …")`). Every handoff the dashboard
+   reads keeps the tool name only — the dock sends these over SSE to the browser (plan § Security). */
+const withoutCommands = (handoff: Handoff): Handoff =>
+  handoff.usage?.permissionDenials
+    ? {
+        ...handoff,
+        usage: {
+          ...handoff.usage,
+          permissionDenials: handoff.usage.permissionDenials.map((denial) => denial.split('(')[0]?.trim() || '?'),
+        },
+      }
+    : handoff;
+
 export const readHandoffs = (projectPath: string): Handoff[] => {
   const file = tracePaths(projectPath).handoffs;
   if (!existsSync(file)) return [];
@@ -101,7 +116,7 @@ export const readHandoffs = (projectPath: string): Handoff[] => {
     .filter(Boolean)
     .flatMap((line) => {
       try {
-        return [JSON.parse(line) as Handoff];
+        return [withoutCommands(JSON.parse(line) as Handoff)];
       } catch {
         return [];
       }

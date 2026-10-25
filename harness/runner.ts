@@ -123,7 +123,7 @@ export function invocation(
     '--allowedTools',
     ...config.agent.allowedTools,
   ];
-  return { file: 'claude', args, display: `claude ${args.slice(0, 13).join(' ')} --allowedTools …` };
+  return { file: 'claude', args, display: `claude ${args.slice(0, 12).join(' ')} --allowedTools …` };
 }
 
 /** The stage's specialists; under merged review the qa unit also gets the judge. */
@@ -302,14 +302,12 @@ async function agentUnit(
   }
   saveTask(task.path, task.doc);
 
+  const startedAt = new Date().toISOString();
   const before = snapshot(project);
   const beforeText = readFileSync(task.path, 'utf8');
   const beforeDoc = parseTask(beforeText);
   const status = taskFields(beforeDoc).status;
-  writeFileSync(
-    paths.running,
-    `${JSON.stringify({ task: id, stage, role, unit, pid: process.pid, startedAt: new Date().toISOString() })}\n`,
-  );
+  writeFileSync(paths.running, `${JSON.stringify({ task: id, stage, role, unit, pid: process.pid, startedAt })}\n`);
   say(`unit ${unit} · ${id} · ${stage} · ${role} · start`);
 
   const specialists = stageSpecialists(registry, stage, config);
@@ -347,7 +345,7 @@ async function agentUnit(
     rmSync(paths.running, { force: true });
   }
 
-  const base = { task: id, stage, unit, from: status } as const;
+  const base = { task: id, stage, unit, from: status, startedAt } as const;
 
   // -- the agent command does not exist: configuration, waiting fixes nothing.
   if (run.code === 127 || /ENOENT/.test(run.spawnError ?? '')) {

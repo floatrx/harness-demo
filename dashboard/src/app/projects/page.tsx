@@ -8,7 +8,7 @@ export default function ProjectsPage() {
   const projects = listProjects();
   return (
     <div className="grid min-h-screen grid-cols-[52px_minmax(0,1fr)]">
-      <RailNav projectId={null} active="projects" />
+      <RailNav projectId={null} />
       <main className="max-w-3xl px-6 py-5">
         <h1 className="text-2xl font-semibold tracking-tight">Projects</h1>
         <p className="mt-1 text-sm text-muted">
