@@ -339,7 +339,11 @@ try {
   await page.waitForTimeout(600);
   await shot(page, 'submitted');
 
-  // 4. Start the loop: specs, plans, two questions.
+  // 4. Start the loop: specs, plans, two questions. The button says who it runs before anything spends a token.
+  const startLabel = (await page.getByTestId('supervisor-start').textContent()) ?? '';
+  const startNote = (await page.getByTestId('start-agent').textContent()) ?? '';
+  if (startLabel !== 'Start · stand-in' || !/no tokens/.test(startNote))
+    throw new Error(`Start button says "${startLabel}" / "${startNote}" under the fake agent`);
   await page.getByTestId('supervisor-start').click();
   await until('T-003 to ask its questions', statusIs('T-003', 'needs-input'));
   for (const id of ['T-001', 'T-002', 'T-004']) await until(`${id} to be planned`, statusIs(id, 'planned'));

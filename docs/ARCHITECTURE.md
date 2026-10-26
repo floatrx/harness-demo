@@ -196,7 +196,9 @@ CLI reads, through the core (`@harness/core`):
 - **Trace, Stats, Agents** — every unit's lanes, the cost per stage and task, the registry and its checks.
 - **Writes** go through one module, `dashboard/src/lib/actions.ts`: a POST with the `x-harness: 1` header, refused
   while the task is in `running.json`, applied with the core's human actions and an atomic file write. Start spawns
-  `harness run` detached; Pause, Resume and Stop write the same control files the CLI writes.
+  `harness run` detached with the dashboard's own environment; Pause, Resume and Stop write the same control files
+  the CLI writes. The Start button and the server's first terminal line name who a Start runs (a stand-in, or real
+  `claude -p` on a subscription or an API key).
 
 ## 11. Security
 

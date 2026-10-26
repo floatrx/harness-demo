@@ -16,6 +16,7 @@ export interface LiveSnapshot {
   /** Changes when the board itself must re-render (a task file, the unit in flight, a handoff). */
   boardVersion: string;
   supervisor: { state: SupervisorState; pid: number | null; since: string | null };
+  agent: DockModel['agent'];
   running: (NonNullable<DockModel['running']> & { trace: UnitTrace | null }) | null;
   upNext: string | null;
   recent: DockModel['recent'];
@@ -47,6 +48,7 @@ export function liveSnapshot(projectId: string): LiveSnapshot {
   const body = {
     boardVersion,
     supervisor: { state, pid: dock.supervisor.pid, since: dock.supervisor.pid ? lockSince(paths.lock) : null },
+    agent: dock.agent,
     running: dock.running ? { ...dock.running, trace } : null,
     upNext: dock.upNext,
     recent: dock.recent,

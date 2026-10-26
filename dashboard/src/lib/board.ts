@@ -19,6 +19,8 @@ import {
 import { validateTask } from '@harness/core/task/validate';
 import type { UnitUsage } from '@harness/core/contracts/trace';
 import { prototypeRounds } from '@harness/core/task/write';
+import { billing } from '@harness/core/runner';
+import type { AgentMode } from './agent-mode.ts';
 import { prototypeImage } from './prototype-image.ts';
 
 export const STAGE_ROLE: Partial<Record<Status, string>> = {
@@ -76,6 +78,8 @@ export interface CardModel {
 
 export interface DockModel {
   supervisor: { state: 'running' | 'paused' | 'stopped'; pid: number | null };
+  /** Who a Start from this dashboard runs for this project: its env (AGENT_CMD) and the project's agent.command. */
+  agent: AgentMode;
   running: { task: string; stage: string; role: string; unit: number; startedAt: string } | null;
   upNext: string | null;
   recent: Handoff[];
@@ -270,6 +274,7 @@ export function loadBoard(id: string): BoardModel {
         : null,
     },
     dock: {
+      agent: billing(config).mode,
       supervisor: {
         state: !holder ? 'stopped' : existsSync(paths.pause) ? 'paused' : 'running',
         pid: holder,

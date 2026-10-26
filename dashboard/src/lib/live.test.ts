@@ -131,3 +131,26 @@ test('the live snapshot carries the unit in flight without tool arguments or mes
     rmSync(paths.running, { force: true });
   }
 });
+
+test('the dock says who Start runs: a stand-in under AGENT_CMD, real claude without it', async () => {
+  const { startupLine } = await import('./startup-line.ts');
+  assert.equal(liveSnapshot(projectId).agent, 'stand-in');
+  assert.match(
+    startupLine(),
+    /^harness · Start runs a stand-in for claude \(AGENT_CMD: node "?…\/fake-agent\.ts"?\) — no tokens$/,
+  );
+  const keep = { agent: process.env.AGENT_CMD, key: process.env.ANTHROPIC_API_KEY };
+  delete process.env.AGENT_CMD;
+  delete process.env.ANTHROPIC_API_KEY;
+  try {
+    assert.equal(liveSnapshot(projectId).agent, 'subscription');
+    assert.match(startupLine(), /^harness · Start runs real claude -p on your subscription — usage limits/);
+    process.env.ANTHROPIC_API_KEY = 'set-for-the-test';
+    assert.equal(liveSnapshot(projectId).agent, 'api-key');
+    assert.match(startupLine(), /billed per token$/);
+  } finally {
+    process.env.AGENT_CMD = keep.agent;
+    if (keep.key === undefined) delete process.env.ANTHROPIC_API_KEY;
+    else process.env.ANTHROPIC_API_KEY = keep.key;
+  }
+});

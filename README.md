@@ -54,7 +54,9 @@ AGENT_CMD="node $PWD/harness/testkit/fake-agent.ts" pnpm dashboard     # → htt
 ```
 
 Open the project, press **Submit** on T-002, press **Start** in the dock, approve the plan when it asks, and watch
-the card go through implement → QA → judge → done. Everything the dashboard does, the CLI does too:
+the card go through implement → QA → judge → done. The terminal and the Start button both say who a Start runs —
+**Start · stand-in** here; without `AGENT_CMD` it reads **Start · claude** and spends real usage. Everything the
+dashboard does, the CLI does too:
 
 ```bash
 export AGENT_CMD="node $PWD/harness/testkit/fake-agent.ts"

@@ -1,12 +1,15 @@
 'use client';
 
 import { useState } from 'react';
+import { type AgentMode, START_LABEL, START_NOTE } from '@/lib/agent-mode';
 import type { SupervisorState } from '@/lib/live';
 import { mutate } from '@/lib/mutate';
 
 interface Props {
   projectId: string;
   state: SupervisorState;
+  /** Who Start runs; Resume continues the supervisor already running, so only Start names it. */
+  agent: AgentMode;
 }
 
 const COMMANDS: Record<SupervisorState, { command: string; label: string; isPrimary?: boolean }[]> = {
@@ -23,7 +26,7 @@ const COMMANDS: Record<SupervisorState, { command: string; label: string; isPrim
 };
 
 /* The same control files the CLI writes; the supervisor reads them at the unit boundary, so nothing is cut mid-turn. */
-export const SupervisorControls = ({ projectId, state }: Props) => {
+export const SupervisorControls = ({ projectId, state, agent }: Props) => {
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const run = async (command: string) => {
@@ -53,10 +56,19 @@ export const SupervisorControls = ({ projectId, state }: Props) => {
                 : 'h-[30px] rounded-[7px] border border-border px-3 text-[12.5px] hover:bg-surface-secondary disabled:opacity-60'
             }
           >
-            {pending === item.command ? `${item.label}…` : item.label}
+            {pending === item.command
+              ? `${item.label}…`
+              : item.command === 'start'
+                ? `${item.label} · ${START_LABEL[agent]}`
+                : item.label}
           </button>
         ))}
       </div>
+      {state === 'stopped' && (
+        <p className={`mt-1 text-xs ${agent === 'stand-in' ? 'text-muted' : 'text-accent'}`} data-testid="start-agent">
+          {START_NOTE[agent]}
+        </p>
+      )}
       {state === 'stopping' && <p className="mt-1 text-xs text-muted">Stops after the unit in flight.</p>}
       {state === 'paused' && <p className="mt-1 text-xs text-muted">Paused at the unit boundary.</p>}
       {error && (

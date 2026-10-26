@@ -36,7 +36,7 @@ export const LiveDock = ({ projectId }: Props) => {
             ? `pid ${supervisor.pid}${supervisor.since ? ` · since ${clock(supervisor.since)}` : ''}`
             : 'Start it here or with harness run'}
         </p>
-        <SupervisorControls projectId={projectId} state={supervisor.state} />
+        <SupervisorControls projectId={projectId} state={supervisor.state} agent={snapshot.agent} />
       </section>
 
       <section>
