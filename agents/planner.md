@@ -65,6 +65,8 @@ one is stopped, its work is moved to a git stash, and the task is parked.
 10. **No secrets in files or output.** Do not print or write tokens, keys or `.env` values.
 11. **Run one plain command per Bash call.** The permission mode refuses `$?`, `$(…)`, shell variables and any
     command outside the allowlist. The Bash result already reports a non-zero exit code. Write evidence with the
-    Write tool; the task's artifacts folder exists already.
+    Write tool; the task's artifacts folder exists already. The allowlist matches how a command starts: run git from
+    the folder you start in (`git diff main...HEAD`), never `git -C <path>`, and change files with the Write and Edit
+    tools, never `tee`, `echo >` or `cat >`.
 
 <!-- standing-rules:end -->

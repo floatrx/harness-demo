@@ -190,6 +190,30 @@ test('stream-json: the verdict comes from the final result, not from a specialis
   assert.equal(readUsage('qa: PASS'), null);
 });
 
+test('preview: only the app stages get the browser — --mcp-config, --strict-mcp-config and mcp__playwright', () => {
+  const saved = process.env.AGENT_CMD;
+  delete process.env.AGENT_CMD;
+  const sandbox = makeSandbox({ app: { start: 'node app.js {port}' } });
+  try {
+    seedTask(sandbox, { id: 'T-001', status: 'qa', scope: ['src/**'], closes: ['true'] });
+    seedTask(sandbox, { id: 'T-002', status: 'ready', scope: ['src/**'], closes: ['true'] });
+    const qa = previewUnit(sandbox.project, 'T-001').invocation.args;
+    assert.ok(qa.includes('--strict-mcp-config'));
+    assert.match(qa[qa.indexOf('--mcp-config') + 1] ?? '', /preview\.mcp\.json$/);
+    assert.equal(qa.at(-1), 'mcp__playwright', 'allowed after the variadic --allowedTools');
+    assert.match(
+      previewUnit(sandbox.project, 'T-001').prompt,
+      /- App: http:\/\/127\.0\.0\.1:<port> — the runner started it/,
+    );
+    const implement = previewUnit(sandbox.project, 'T-002').invocation.args;
+    assert.ok(!implement.includes('--mcp-config') && !implement.includes('mcp__playwright'));
+  } finally {
+    sandbox.cleanup();
+    if (saved === undefined) delete process.env.AGENT_CMD;
+    else process.env.AGENT_CMD = saved;
+  }
+});
+
 test('preview of a draft shows the spec unit it gets after Submit, and changes nothing', () => {
   const sandbox = makeSandbox();
   try {

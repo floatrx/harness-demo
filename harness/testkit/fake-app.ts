@@ -22,7 +22,7 @@ if (mode === 'stubborn') process.on('SIGTERM', () => console.log('fake-app: SIGT
 if (mode === 'env') console.log(`fake-app: agent markers ${process.env.CLAUDECODE ?? process.env.AI_AGENT ?? 'none'}`);
 
 const server = createServer((request, response) => {
-  response.writeHead(200, { 'content-type': 'text/plain' });
+  response.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
   response.end(`fake app · ${request.url ?? '/'}\n`);
 });
 

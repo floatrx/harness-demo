@@ -26,6 +26,8 @@ export function tracePaths(project: string) {
     /** The app the runner started for a unit: its record (pid, port, runner) and its output. */
     app: (n: number) => join(dir, `unit-${String(n).padStart(4, '0')}.app.json`),
     appLog: (n: number) => join(dir, `unit-${String(n).padStart(4, '0')}.app.log`),
+    /** The MCP config a browser unit received (Playwright MCP). */
+    mcp: (n: number) => join(dir, `unit-${String(n).padStart(4, '0')}.mcp.json`),
     /** The `claude --agents` JSON a unit received. */
     agents: (n: number) => join(dir, `unit-${String(n).padStart(4, '0')}.agents.json`),
   };

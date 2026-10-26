@@ -6,7 +6,16 @@
 //   3 nothing left to take · 4 the agent could not run (usage limit, network, login, probe)
 
 import { spawn } from 'node:child_process';
-import { createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -107,6 +116,8 @@ export function invocation(
   model: string,
   agentsFile: string,
   options: Pick<RunOptions, 'agentCommand'> = {},
+  /** The unit's MCP config (app stages with a running app): the only MCP server it gets, and its tools allowed. */
+  mcpConfig: string | null = null,
 ): Invocation {
   const override = options.agentCommand ?? process.env.AGENT_CMD ?? config.agent.command;
   if (override) {
@@ -126,11 +137,36 @@ export function invocation(
     config.agent.settingSources,
     '--agents',
     agentsFile,
+    ...(mcpConfig ? ['--mcp-config', mcpConfig, '--strict-mcp-config'] : []),
     // Variadic: it must stay last.
     '--allowedTools',
     ...config.agent.allowedTools,
+    ...(mcpConfig ? [BROWSER_TOOLS] : []),
   ];
   return { file: 'claude', args, display: `claude ${args.slice(0, 12).join(' ')} --allowedTools …` };
+}
+
+/** New untracked images in the project root since the snapshot: where Playwright MCP saves a named screenshot. */
+export function browserLeftovers(project: string, before: ReadonlySet<string>): string[] {
+  return dirty(project)
+    .filter((entry) => entry.code === '??' && !before.has(entry.path))
+    .map((entry) => entry.path)
+    .filter((path) => !path.includes('/') && /\.(png|jpe?g|webp)$/i.test(path));
+}
+
+/** Every tool of the unit's Playwright MCP server (`mcp__<server>` allows the whole server). */
+export const BROWSER_TOOLS = 'mcp__playwright';
+
+/**
+ * The MCP config of a browser unit: one server, Playwright MCP through `npx` (the pinned `app.browser`), headless system
+ * Chrome, an isolated profile, and its screenshots in the task's artifacts folder.
+ */
+export function writeMcpConfig(file: string, browser: string, artifactsDir: string): void {
+  const server = {
+    command: 'npx',
+    args: ['-y', browser, '--headless', '--isolated', '--browser', 'chrome', '--output-dir', artifactsDir],
+  };
+  writeFileSync(file, `${JSON.stringify({ mcpServers: { playwright: server } }, null, 2)}\n`);
 }
 
 /**
@@ -422,7 +458,13 @@ async function agentUnit(
   const agentsFile = paths.agents(unit);
   writeAgentsFile(agentsFile, specialists, config);
   const model = config.roles.models[role] ?? 'sonnet';
-  const how = invocation(config, model, agentsFile, options);
+  // A browser only next to a running app: without one there is nothing to look at.
+  let mcpFile: string | null = null;
+  if (appUrl && config.app) {
+    mcpFile = paths.mcp(unit);
+    writeMcpConfig(mcpFile, config.app.browser, join(project, artifacts));
+  }
+  const how = invocation(config, model, agentsFile, options, mcpFile);
   const memory = buildMemory(project, paths, task.fields, stage, config.baseBranch);
   // The folder exists before the agent starts: `mkdir` is not on the allowlist (pilot lesson 3).
   mkdirSync(join(project, artifacts), { recursive: true });
@@ -459,6 +501,7 @@ async function agentUnit(
         HARNESS_BRANCH: branch,
         HARNESS_ARTIFACTS: join(project, artifacts),
         ...(appUrl ? { HARNESS_APP_URL: appUrl } : {}),
+        ...(mcpFile ? { HARNESS_MCP_CONFIG: mcpFile } : {}),
         HARNESS_AGENTS_FILE: agentsFile,
         CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1',
       },
@@ -468,6 +511,13 @@ async function agentUnit(
   }
 
   const base = { task: id, stage, unit, from: status, startedAt } as const;
+
+  // -- a browser unit's named screenshots: Playwright MCP resolves an explicit file name against the workspace root,
+  //    so `shot.png` lands in the project root. Not a defect in the code — move it next to the other evidence.
+  //    The Log line is written with the runner's own lines below, after the task-file contract has run.
+  const movedShots = mcpFile ? browserLeftovers(project, before.dirty) : [];
+  for (const name of movedShots) renameSync(join(project, name), join(project, artifacts, name));
+  const shotLines = movedShots.map((name) => `  ↳ moved the browser's ${name} from the project root into ${artifacts}/`);
 
   // -- the agent command does not exist: configuration, waiting fixes nothing.
   if (run.code === 127 || /ENOENT/.test(run.spawnError ?? '')) {
@@ -524,6 +574,7 @@ async function agentUnit(
     setField(doc, 'parkedFrom', status);
     moveTo(doc, 'parked', who);
     for (const line of reasons) appendLog(doc, `  ↳ ${line}`);
+    for (const line of shotLines) appendLog(doc, line);
     if (note) appendLog(doc, `  ↳ quarantine: ${note}`);
     saveTask(task.path, doc);
     say(`unit ${unit} · ${id} · exit 1 · parked · ${reasons.join('; ')}`);
@@ -595,7 +646,10 @@ async function agentUnit(
         // Not `bounces`: Reopen resets it, and the pilot's reopened round was parked here (lesson 4).
         if (commitsBetween(project, config.baseBranch, 'HEAD').length === 0)
           return park(['implement: no change inside scope'], true);
-        appendLog(doc, '  ↳ no change this round — the implementer found nothing to fix; the branch already holds the work');
+        appendLog(
+          doc,
+          '  ↳ no change this round — the implementer found nothing to fix; the branch already holds the work',
+        );
         target = 'qa';
         break;
       }
@@ -643,6 +697,7 @@ async function agentUnit(
 
   if (target !== status) moveTo(doc, target, who);
   if (commit) appendLog(doc, `  ↳ commit ${commit.slice(0, 7)} on ${branch}`);
+  for (const line of shotLines) appendLog(doc, line);
   saveTask(task.path, doc);
   const message = `${status} → ${target}${commit ? ` · commit ${commit.slice(0, 7)}` : ''}`;
   say(`unit ${unit} · ${id} · ${stage} · exit 0 · ${message}`);
@@ -852,12 +907,15 @@ export function previewUnit(project: string, id: string): Preview {
       ? config.baseBranch
       : (fields.branch ?? `harness/${id}-${slugify(fields.title)}`);
   const memory = buildMemory(project, paths, fields, stage, config.baseBranch);
+  const previewMcp = config.app?.stages.includes(stage) ? join(paths.dir, 'preview.mcp.json') : null;
+  if (previewMcp && config.app)
+    writeMcpConfig(previewMcp, config.app.browser, join(project, `.harness/artifacts/${id}`));
   return {
     task: id,
     ...(draft ? { note: `${id} is a draft: this is the spec unit it gets after Submit` } : {}),
     stage,
     role,
-    invocation: invocation(config, config.roles.models[role] ?? 'sonnet', agentsFile),
+    invocation: invocation(config, config.roles.models[role] ?? 'sonnet', agentsFile, {}, previewMcp),
     specialists: specialists.map((agent) => agent.name),
     prompt: buildPrompt({
       stage,

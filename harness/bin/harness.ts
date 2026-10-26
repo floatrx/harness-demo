@@ -10,6 +10,7 @@ import { sendTelegram, telegramKeys } from '../notify.ts';
 import { projectStats } from '../stats.ts';
 import { addProject, listProjects, removeProject, resolveProject } from '../projects.ts';
 import { billing, describeQueue, previewUnit, runUnit } from '../runner.ts';
+import { sh } from '../git.ts';
 import { baseAgentsDir, loadRegistry, registryProblems, standingRulesDrift, syncStandingRules } from '../agents.ts';
 import { runCases } from '../selftest.ts';
 import { createExample } from '../example.ts';
@@ -281,6 +282,9 @@ async function main(): Promise<void> {
       console.log(`\nbase: ${baseAgentsDir()}`);
       for (const path of drift) console.log(`! standing rules drifted: ${path} — run \`harness agents --sync\``);
       for (const problem of problems) console.log(`! ${problem}`);
+      // A warning, not a failure: without npx a browser unit still runs, it just gets no browser.
+      if (config?.app && sh('command -v npx', root ?? process.cwd()).code !== 0)
+        console.log('! warning: app is set but npx is not on PATH — qa and prototype units will get no browser');
       if (values.check && (drift.length || problems.length)) process.exitCode = 2;
       else if (values.check) console.log('ok: no drift, no model clash');
       return;
