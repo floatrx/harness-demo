@@ -30,7 +30,7 @@ import { runClosing, uncallableCommands } from './contracts/closing.ts';
 import { runGate } from './contracts/gate.ts';
 import { judgeScope, outsideHarness, quarantine, snapshot } from './contracts/scope.ts';
 import { limitResetAt, readUsage, readVerdict, resultEvent } from './contracts/trace.ts';
-import { type RunningApp, startApp, stopApp, stopOrphanApps } from './app.ts';
+import { type RunningApp, restoreAppWrites, startApp, stopApp, stopOrphanApps } from './app.ts';
 import {
   type AgentDef,
   agentsForStage,
@@ -213,7 +213,15 @@ export async function runUnit(project: string, options: RunOptions = {}): Promis
   try {
     result = await runStep(project, options, apps);
   } finally {
-    for (const app of apps) await stopApp(app);
+    for (const app of apps) {
+      await stopApp(app);
+      const restored = restoreAppWrites(app);
+      if (restored.length)
+        appendProgress(
+          tracePaths(project),
+          `the app rewrote ${restored.join(', ')} while it ran — restored after it stopped`,
+        );
+    }
   }
   if (result.task && result.moved) await notifyAfter(project, result);
   return result;
@@ -430,7 +438,9 @@ async function agentUnit(
   // -- the app (qa, prototype): started before the snapshot, so what the server writes at start is not the unit's.
   let appUrl: string | null = null;
   if (config.app?.stages.includes(stage)) {
+    const dirtyBefore = new Set(dirty(project).map((entry) => entry.path));
     const started = await startApp(config.app, project, { log: paths.appLog(unit), record: paths.app(unit) });
+    if (started.ok) Object.assign(started.app, { project, dirtyBefore });
     if (started.ok) {
       apps.push(started.app);
       appUrl = started.app.url;
@@ -518,7 +528,9 @@ async function agentUnit(
   //    The Log line is written with the runner's own lines below, after the task-file contract has run.
   const movedShots = mcpFile ? browserLeftovers(project, before.dirty) : [];
   for (const name of movedShots) renameSync(join(project, name), join(project, artifacts, name));
-  const shotLines = movedShots.map((name) => `  ↳ moved the browser's ${name} from the project root into ${artifacts}/`);
+  const shotLines = movedShots.map(
+    (name) => `  ↳ moved the browser's ${name} from the project root into ${artifacts}/`,
+  );
 
   // -- the agent command does not exist: configuration, waiting fixes nothing.
   if (run.code === 127 || /ENOENT/.test(run.spawnError ?? '')) {

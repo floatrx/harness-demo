@@ -487,6 +487,21 @@ export const CASES: Case[] = [
       }),
   },
   {
+    name: 'app: a tracked file the app rewrites while it runs is restored after it stops; the next unit still runs',
+    run: () =>
+      withSandbox(withApp('rewrite:README.md'), async (sandbox) => {
+        const { result } = await qaUnit(sandbox, [{ say: 'qa: PASS' }]);
+        expect(result.exit === 0, `qa unit exit ${result.exit}: ${result.message}`);
+        const left = dirty(sandbox.project).filter((entry) => !entry.path.startsWith('.harness/'));
+        expect(left.length === 0, `dirty after the unit: ${left.map((entry) => entry.path).join(', ')}`);
+        const progress = readFileSync(join(sandbox.project, '.harness/trace/progress.log'), 'utf8');
+        expect(/the app rewrote README\.md while it ran — restored/.test(progress), 'no restore line in progress');
+        const next = await runUnit(sandbox.project, sandbox.agent);
+        expect(next.exit !== 2, `the next pick refused: ${next.message}`);
+        return 'README.md rewritten by the app → restored; the next unit ran';
+      }),
+  },
+  {
     name: 'bounce round: no change after a wrong reject goes back to qa, and the judge decides again (pilot lesson 4)',
     run: () =>
       withSandbox({}, async (sandbox) => {

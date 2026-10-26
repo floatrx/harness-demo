@@ -3,8 +3,10 @@
 //   slow:<ms>   listens only after <ms>
 //   fail        prints an error and exits 1 before listening
 //   stubborn    answers, but ignores SIGTERM (the runner must SIGKILL it)
-//   env         answers, and prints whether an agent marker (CLAUDECODE, AI_AGENT) reached it
+//   env         answers, and prints whether an agent marker (CLAUDECODE, AI_AGENT) or NODE_ENV reached it
+//   rewrite:<f> answers, after appending a line to <f> in its cwd (a dev server that rewrites a config on start)
 
+import { appendFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 
 const port = Number(process.argv[2] ?? process.env.PORT);
@@ -19,7 +21,11 @@ if (mode === 'fail') {
   process.exit(1);
 }
 if (mode === 'stubborn') process.on('SIGTERM', () => console.log('fake-app: SIGTERM ignored'));
-if (mode === 'env') console.log(`fake-app: agent markers ${process.env.CLAUDECODE ?? process.env.AI_AGENT ?? 'none'}`);
+if (mode === 'env') {
+  console.log(`fake-app: agent markers ${process.env.CLAUDECODE ?? process.env.AI_AGENT ?? 'none'}`);
+  console.log(`fake-app: NODE_ENV ${process.env.NODE_ENV ?? 'unset'}`);
+}
+if (mode.startsWith('rewrite:')) appendFileSync(mode.slice(8), '// rewritten by the dev server\n');
 
 const server = createServer((request, response) => {
   response.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });

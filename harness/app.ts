@@ -8,6 +8,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, 
 import { createServer } from 'node:net';
 import { dirname, join } from 'node:path';
 import type { AppConfig } from './config.ts';
+import { dirty, git } from './git.ts';
 
 export interface RunningApp {
   pid: number;
@@ -16,6 +17,9 @@ export interface RunningApp {
   /** `trace/unit-NNNN.app.json`: the pid, the port and the runner that owns it. */
   record: string;
   log: string;
+  /** The project and its dirty paths before the app started: what the app rewrites is put back after it stops. */
+  project?: string;
+  dirtyBefore?: ReadonlySet<string>;
 }
 
 export type AppStart = { ok: true; app: RunningApp } | { ok: false; reason: string };
@@ -23,13 +27,18 @@ export type AppStart = { ok: true; app: RunningApp } | { ok: false; reason: stri
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
- * The app's environment: the runner's, minus the variables that say "an AI agent runs here" and the agent session's
- * own keys. The app is a dev server for the reviewer, not an agent session — Next 16 writes `AGENTS.md` into the
- * project on start when it detects an agent, which the scope contract then counts as the unit's stray file.
+ * The app's environment: the runner's, minus what belongs to someone else.
+ * - The AI-agent markers and the agent session's keys: the app is a dev server for the reviewer, not an agent session
+ *   — Next 16 writes `AGENTS.md` into the project on start when it detects an agent.
+ * - `NODE_ENV` and Next's own internals: a supervisor started by the dashboard (`next start`) carries
+ *   `NODE_ENV=production` and `__NEXT_*` values, and a `next dev` that inherits them picks a different dist folder
+ *   and rewrites the project's tsconfig.json (e2e, 2026-10-26).
  */
 export function appEnv(env: NodeJS.ProcessEnv, port: number): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = { ...env, PORT: String(port) };
-  for (const key of Object.keys(out)) if (/^(CLAUDECODE|CLAUDE_CODE.*|AI_AGENT)$/.test(key)) delete out[key];
+  const foreign =
+    /^(CLAUDECODE|CLAUDE_CODE.*|AI_AGENT|NODE_ENV|__NEXT.*|NEXT_PRIVATE_.*|NEXT_RUNTIME|NEXT_DEPLOYMENT_ID|TURBOPACK.*)$/;
+  for (const key of Object.keys(out)) if (foreign.test(key)) delete out[key];
   return out;
 }
 
@@ -172,4 +181,19 @@ function runnerAlive(pid: number): boolean {
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === 'EPERM';
   }
+}
+
+/**
+ * Tracked files the app changed while it ran (a dev server that rewrites tsconfig.json on start, say), put back once
+ * it has stopped. A file the unit changed is committed or quarantined by then, so whatever tracked file is still dirty
+ * and was clean before the app started is the app's doing. Returns the paths restored.
+ */
+export function restoreAppWrites(app: RunningApp): string[] {
+  if (!app.project || !app.dirtyBefore) return [];
+  const before = app.dirtyBefore;
+  const changed = dirty(app.project)
+    .filter((entry) => entry.code !== '??' && !before.has(entry.path))
+    .map((entry) => entry.path);
+  if (changed.length) git(app.project, ['checkout', '--quiet', '--', ...changed]);
+  return changed;
 }

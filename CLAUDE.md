@@ -61,6 +61,8 @@ harness/
 - **Narrow every check.** A check must not fail a unit for a defect the unit did not cause (see `contracts/gate.ts`).
 - **`examples/app` is a template, not a project.** The loop needs its own git repository (it branches and commits),
   so never run it with `--project examples/app`; keep the template green (`pnpm -C examples/app typecheck && … test`).
+  A change to the template runs the e2e walkthrough **before** the commit: the e2e and the quickstart drive a copy of
+  it (its `app` block once made every fake qa/prototype unit start a real `next dev`, which broke the e2e).
 - **Telegram sends only unique messages, and a test never reaches the real chat.** `notify` holds back a repeat (same
   project + text, ids and timestamps normalized) for 6 h, caps the chat at 6 messages a minute, and a project folder
   that no longer exists sends nothing. A test that runs the supervisor in-process stops it (`requestStop` + `await`)

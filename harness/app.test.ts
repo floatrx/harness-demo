@@ -73,19 +73,24 @@ test("an app whose runner died is stopped by the next run; a live runner's app i
   await stopApp(owned.app);
 });
 
-test('the app starts without agent markers, so a dev server does not write agent files into the project', async () => {
-  const saved = { code: process.env.CLAUDECODE, agent: process.env.AI_AGENT };
+test("the app starts without agent markers or the caller's NODE_ENV, so a dev server writes nothing into the project", async () => {
+  const saved = { code: process.env.CLAUDECODE, agent: process.env.AI_AGENT, nodeEnv: process.env.NODE_ENV };
   process.env.CLAUDECODE = '1';
   process.env.AI_AGENT = 'claude';
+  // A supervisor started by the built dashboard (`next start`) carries this.
+  process.env.NODE_ENV = 'production';
   try {
     const started = await startApp(app('env'), dir, files('env'));
     assert.ok(started.ok);
     await stopApp(started.app);
-    assert.match(readFileSync(started.app.log, 'utf8'), /fake-app: agent markers none/);
+    const log = readFileSync(started.app.log, 'utf8');
+    assert.match(log, /fake-app: agent markers none/);
+    assert.match(log, /fake-app: NODE_ENV unset/);
   } finally {
     for (const [key, value] of [
       ['CLAUDECODE', saved.code],
       ['AI_AGENT', saved.agent],
+      ['NODE_ENV', saved.nodeEnv],
     ] as const) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
