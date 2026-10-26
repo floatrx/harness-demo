@@ -121,15 +121,59 @@ review, a parked task, a done task, a pull request, and how a run ended. An empt
 
 On a Claude subscription the loop spends your **usage limits**, not money: `claude -p` reports an API-equivalent
 price, and the dashboard and `harness stats` show that figure. When a unit hits a usage limit the work is put back and
-the supervisor waits and retries. With `ANTHROPIC_API_KEY` set, `claude -p` bills the API per token — the supervisor's
-first log line says which one applies.
+the supervisor waits — until the reset time the limit names, when it names one — and retries. With
+`ANTHROPIC_API_KEY` set, `claude -p` bills the API per token; the supervisor logs which one applies right after it
+starts.
 
-A task from draft to pull request is seven units with a fresh context each: spec, plan, (prototype), implement, qa,
-judge. The pilot on the demo project measured, per stage: _see [the pilot](#pilot)._
+A task from draft to pull request is five units, each with a fresh context: spec, plan, implement, qa, judge. A UI
+task adds a prototype round, and an interview adds one more spec unit. On the pilot below, the cleanest task (an
+interview, a prototype, no bounce) took 7 units, 3 min 21 s of agent time and 11k tokens — $1.68 API-equivalent.
 
 ## Pilot
 
-_Filled in from the real runs on [harness-demo-bookmarks](https://github.com/floatrx/harness-demo-bookmarks)._
+Three tasks went from a draft to an open pull request on
+[harness-demo-bookmarks](https://github.com/floatrx/harness-demo-bookmarks) with real `claude -p` on a subscription
+login, the default models (sonnet coordinators, an opus judge, a haiku explorer), gated autonomy and delivery on.
+Claude passed the human gates on the recommended options — except where an option was wrong, noted below. Nothing was
+merged.
+
+| Task | Kind | What happened | Units | Agent time | Tokens | API-equiv. | PR |
+|---|---|---|---:|---:|---:|---:|---|
+| T-004 Show when a bookmark was added | logic | plan sent back once (`revise`); three harness bugs parked it on the way, each fixed in code | 13 | 6:51 | 25.0k | $2.30 | [#2](https://github.com/floatrx/harness-demo-bookmarks/pull/2) |
+| T-001 Search box that filters the list | ui | 2-question interview, prototype accepted on round 1, no bounce | 7 | 3:21 | 11.1k | $1.68 | [#3](https://github.com/floatrx/harness-demo-bookmarks/pull/3) |
+| T-003 Make the bookmarks better | vague | 4-question interview (Q1's recommended option duplicated T-001, so answered otherwise); plan sent back once; **the judge rejected round 1** — the count sat outside the header and showed seed data on first paint — round 2 fixed both; two units hit the session limit | 14 | 7:48 | 18.7k | $2.86 | [#4](https://github.com/floatrx/harness-demo-bookmarks/pull/4) |
+
+T-002 ([#1](https://github.com/floatrx/harness-demo-bookmarks/pull/1)) was delivered by the stand-in agent, for zero
+tokens. Per stage, from `harness stats --project bookmarks` (39 units, 5 of them the stand-in's):
+
+| Stage | Units | Parked | Agent time | Tokens | API-equiv. |
+|---|---:|---:|---:|---:|---:|
+| spec | 8 | 1 | 3:30 | 8.9k | $1.25 |
+| plan | 7 | 1 | 4:07 | 15.9k | $1.45 |
+| prototype | 1 | 0 | 0:44 | 4.2k | $0.33 |
+| implement | 8 | 2 | 3:08 | 16.0k | $1.49 |
+| qa | 7 | 1 | 2:11 | 3.6k | $0.83 |
+| judge | 8 | 0 | 4:22 | 6.2k | $1.49 |
+| **total** | **39** | **5** | **18:03** | **54.7k** | **$6.83** |
+
+Tokens are input + output; prompt-cache reads come on top (about 2.2M for T-004 alone) and are much cheaper.
+
+**What the pilot taught.** Every failure became a contract or a prompt line with a test, never a hand edit of a task:
+
+1. A unit is told which task-file sections it may write; the planner had invented `## Risks`.
+2. `revise` sends a plan back with a comment; `planned` used to have one way out, Approve.
+3. QA cannot walk a running app (no browser): `[found]` criteria go to the reviewer's checklist in the PR, and the
+   allowlist gained read-only `grep`, `cat`, `head`, `tail`, `wc`.
+4. A `[closes]` command is the backtick span after the colon — the loop once ran `formatRelativeTime` as a command
+   and overruled a correct verdict. The plan contract now checks every command is callable.
+5. The designer draws a faithful SVG wireframe when nothing can take a screenshot.
+6. Spec and plan units see the other tasks on the board, so an interview never recommends another task's work.
+7. A human action on another task while a unit runs is neither blamed on the unit nor undone by its quarantine.
+8. Criteria are numbered `N.` — `1a.` was silently skipped by the closing contract.
+9. A usage limit that names its reset time is waited out exactly; Telegram sends only unique messages.
+
+Each run's units are on the demo project's dashboard (`/live`, `/stats`); the contracts they exercised are in
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Layout
 
