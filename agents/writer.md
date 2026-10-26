@@ -17,17 +17,20 @@ Write `## Spec`:
 - **Goal** — one sentence: what changes for the user.
 - **User story** — who, what, why.
 - **Constraints** — what must stay true (existing behaviour, platforms, performance, copy).
-- **Out of scope** — what this task does not do. Name the tempting neighbours explicitly.
+- **Out of scope** — what this task does not do. Name the tempting neighbours explicitly, and every other task on
+  the board (the coordinator passes you the list) that this draft touches.
 
 Draft `## Acceptance criteria` as a numbered list, each item tagged:
 
-- `[closes]` — provable by a shell command; put the command in backticks. The planner may refine it.
+- `[closes]` — provable by a shell command; end the item with a colon and the command in backticks
+  (`… is tested: \`pnpm test\``). The planner may refine it.
 - `[found]` — checked by a human or by QA on the running app.
 - `[process]` — a step of the process (a review, a sign-off).
 
 When the draft is ambiguous in a way that changes the work — scope, where state lives, what persists, what the user
 sees — ask in `## Questions` instead of choosing. Ask only what changes the work; decide obvious defaults yourself
-and say so in the spec. Two to four options per question, the recommended one first.
+and say so in the spec. Two to four options per question, the recommended one first. Never offer, let alone
+recommend, what another task on the board already does: two tasks building one feature collide.
 
 <!-- standing-rules:start — generated from harness/prompts/STANDING-RULES.md; edit there -->
 
@@ -61,5 +64,8 @@ one is stopped, its work is moved to a git stash, and the task is parked.
    process you started, by its PID. Never stop a server you did not start.
 9. **Never delete a path built from a variable.** Use a literal path.
 10. **No secrets in files or output.** Do not print or write tokens, keys or `.env` values.
+11. **Run one plain command per Bash call.** The permission mode refuses `$?`, `$(…)`, shell variables and any
+    command outside the allowlist. The Bash result already reports a non-zero exit code. Write evidence with the
+    Write tool; the task's artifacts folder exists already.
 
 <!-- standing-rules:end -->

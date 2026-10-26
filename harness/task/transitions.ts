@@ -95,6 +95,8 @@ export const HUMAN_TRANSITIONS: readonly Transition[] = [
   { action: 'submit', from: 'draft', to: to('spec') },
   // `needs-input` is left by the runner once every question is answered; answering is a section write.
   { action: 'approve', from: 'planned', to: afterPlanned },
+  // Request changes: the comment lands in the human-owned `### Review` under `## Plan`; the next plan unit answers it.
+  { action: 'revise', from: 'planned', to: to('plan') },
   { action: 'accept', from: 'prototype', to: to('ready'), guard: (task) => task.prototype === 'review' },
   // Comment keeps the column and flips `prototype: review → drafting`.
   { action: 'comment', from: 'prototype', to: to('prototype'), guard: (task) => task.prototype === 'review' },

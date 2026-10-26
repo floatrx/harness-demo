@@ -1,11 +1,49 @@
-/* Server-only: what /stats shows — units, time, tokens and cost per stage and per task, from handoffs.jsonl.
+// Stats: every unit a project has run (from trace/handoffs.jsonl) and what it took — units, time, tokens and the
+// API-equivalent cost per stage and per task. Shared by `harness stats` and the dashboard's /stats and /live.
+//
+// Honesty rules: a unit whose agent printed no stream-json result has NO usage. Its cost is unknown, not zero, so a
+// row whose units all lack usage shows null, and the reader is told how many units reported. The cost is what
+// `claude -p` reports as `total_cost_usd` — an API-equivalent price, not a bill on a subscription login. Permission
+// denials keep the tool name only (readHandoffs strips the refused command).
 
-   Honesty rules: a unit whose agent printed no stream-json result has NO usage. Its cost is unknown, not zero, so
-   a row whose units all lack usage shows null, and the page says how many units reported. Permission denials keep the
-   tool name only; the refused command never leaves this module (it can carry a token or a URL). */
+import { existsSync, readFileSync } from 'node:fs';
+import { STAGE_ROLE, UNIT_STAGES, type UnitStage } from './config.ts';
+import { type HandoffRecord, readHandoffs, tracePaths } from './paths.ts';
+import { listTaskFiles, loadTask } from './task/task.ts';
 
-import { STAGE_ROLE, UNIT_STAGES, type UnitStage } from '@harness/core/config';
-import type { UnitRecord } from './units.ts';
+export interface UnitRecord extends Omit<HandoffRecord, 'startedAt'> {
+  unit: number;
+  startedAt: string | null;
+  durationMs: number | null;
+}
+
+/* Units run before the runner recorded startedAt: take the first stamped line of their trace. */
+const traceStart = (file: string): string | null => {
+  if (!existsSync(file)) return null;
+  const first = readFileSync(file, 'utf8').slice(0, 400).split('\n')[0] ?? '';
+  return /"harness_ts":"([^"]+)"/.exec(first)?.[1] ?? null;
+};
+
+/** Agent units only (runner steps — advance, deliver — carry no unit number), oldest first. */
+export function listUnits(projectPath: string): UnitRecord[] {
+  const paths = tracePaths(projectPath);
+  return readHandoffs(paths).flatMap((handoff) => {
+    if (handoff.stage === 'advance' || typeof handoff.unit !== 'number') return [];
+    const startedAt = handoff.startedAt ?? traceStart(paths.unit(handoff.unit));
+    const durationMs =
+      handoff.usage?.durationMs ??
+      (startedAt ? Math.max(0, new Date(handoff.at).getTime() - new Date(startedAt).getTime()) : null);
+    return [{ ...handoff, unit: handoff.unit, startedAt, durationMs }];
+  });
+}
+
+export const EXIT_LABEL: Record<number, string> = {
+  0: 'done',
+  1: 'hard stop',
+  2: 'config',
+  3: 'idle',
+  4: 'agent down',
+};
 
 export interface StatRow {
   key: string;
@@ -112,4 +150,17 @@ export function computeStats(units: readonly UnitRecord[], tasks: readonly TaskI
     firstAt: units[0]?.startedAt ?? units[0]?.at ?? null,
     lastAt: units.at(-1)?.at ?? null,
   };
+}
+
+/** Everything `harness stats` prints for a project: its units and its tasks' titles and statuses. */
+export function projectStats(projectPath: string): ProjectStats {
+  const tasks = listTaskFiles(tracePaths(projectPath).tasks).flatMap((file) => {
+    try {
+      const { fields } = loadTask(file);
+      return [{ id: fields.id, title: fields.title, status: fields.status }];
+    } catch {
+      return [];
+    }
+  });
+  return computeStats(listUnits(projectPath), tasks);
 }

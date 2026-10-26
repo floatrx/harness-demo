@@ -14,7 +14,7 @@ import { deliveryPreflight } from './deliver.ts';
 import { notify } from './notify.ts';
 import { sh } from './git.ts';
 import { appendProgress, ensureTrace, tracePaths } from './paths.ts';
-import { type RunOptions, type UnitResult, EXIT, runUnit } from './runner.ts';
+import { type RunOptions, type UnitResult, EXIT, billing, runUnit } from './runner.ts';
 
 export interface SuperviseOptions extends RunOptions {
   /** Exit 0 when nothing is left to take instead of idling for new work. */
@@ -82,7 +82,10 @@ export async function supervise(project: string, options: SuperviseOptions = {})
   const s = config.supervisor;
   const units: UnitResult[] = [];
   let barren = 0;
-  let waitedForAgent = 0;
+  // Milliseconds, not rounded seconds: with sub-second naps a rounded counter stayed 0, the ceiling never came and the
+  // "agent could not run" notice went out on every turn of the loop (2026-10-26).
+  let waitedMs = 0;
+  let downNotified = false;
   let signalled = false;
   const onSignal = () => {
     signalled = true;
@@ -114,6 +117,7 @@ export async function supervise(project: string, options: SuperviseOptions = {})
   };
 
   say(`start · pid ${process.pid}${options.onceThrough ? ' · once-through' : ''}`);
+  say(`billing: ${billing(config, options).note}`);
   try {
     for (;;) {
       if (stopRequested()) return finish(0, 'stopped');
@@ -132,7 +136,8 @@ export async function supervise(project: string, options: SuperviseOptions = {})
       switch (result.exit) {
         case EXIT.done:
         case EXIT.hardStop:
-          waitedForAgent = 0;
+          waitedMs = 0;
+          downNotified = false;
           barren = result.moved ? 0 : barren + 1;
           if (barren >= s.barrenUnits) return finish(3, `${barren} units in a row moved nothing`);
           break;
@@ -143,16 +148,24 @@ export async function supervise(project: string, options: SuperviseOptions = {})
           if (!(await nap(s.idlePollSeconds * 1000))) return finish(0, 'stopped while idle');
           break;
         case EXIT.agentDown: {
-          if (waitedForAgent >= s.usageCeilingSeconds) return finish(4, `agent still down after ${waitedForAgent}s`);
-          say(`agent could not run (${result.message}) — waiting`);
-          if (waitedForAgent === 0)
+          if (waitedMs >= s.usageCeilingSeconds * 1000)
+            return finish(4, `agent still down after ${Math.round(waitedMs / 1000)}s`);
+          // A limit that names its reset: nap until then (+1 min), unless that runs past the ceiling.
+          const left = s.usageCeilingSeconds * 1000 - waitedMs;
+          const until = result.retryAt && result.retryAt - Date.now() < left ? result.retryAt + 60_000 : undefined;
+          say(
+            `agent could not run (${result.message}) — waiting${until ? ` until ${new Date(until).toISOString()}` : ''}`,
+          );
+          if (!downNotified) {
+            downNotified = true;
             await notify(project, config, paths, {
               event: 'supervisor',
               text: `the agent could not run (${result.message}) — waiting, then retrying`,
             });
+          }
           const started = Date.now();
-          const ok = await waitForAgent(project, config, nap);
-          waitedForAgent += Math.round((Date.now() - started) / 1000);
+          const ok = until ? await nap(Math.max(0, until - Date.now())) : await waitForAgent(project, config, nap);
+          waitedMs += Date.now() - started;
           if (!ok) return finish(0, 'stopped while waiting for the agent');
           break;
         }

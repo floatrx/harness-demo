@@ -57,3 +57,53 @@ test('pause lands at the unit boundary, resume continues, stop ends the supervis
     sandbox.cleanup();
   }
 });
+
+/** An in-process supervisor whose units are all "agent down"; always stopped before the sandbox goes away. */
+async function downLoop(retryAt: number, ceilingSeconds: number, check: (log: string) => void): Promise<void> {
+  const { supervise, requestStop } = await import('./supervise.ts');
+  const { EXIT } = await import('./runner.ts');
+  const { FAST_SUPERVISOR } = await import('./testkit/sandbox.ts');
+  const sandbox = makeSandbox({ supervisor: { ...FAST_SUPERVISOR, usageCeilingSeconds: ceilingSeconds } });
+  const paths = tracePaths(sandbox.project);
+  const progress = () => (existsSync(paths.progress) ? readFileSync(paths.progress, 'utf8') : '');
+  const running = supervise(sandbox.project, {
+    onceThrough: true,
+    unitRunner: async () => ({ exit: EXIT.agentDown, message: 'agent could not run: limit', moved: false, retryAt }),
+  });
+  try {
+    await until(() => progress().includes('— waiting'), 'the wait line');
+    check(progress());
+  } finally {
+    // Stop it before cleanup, pass or fail: a loop left running outlives its sandbox (2026-10-26).
+    requestStop(sandbox.project);
+    await running;
+    sandbox.cleanup();
+  }
+}
+
+test('a usage limit that names its reset: the supervisor naps until then plus a minute (pilot lesson 9)', async () => {
+  const retryAt = Date.now() + 3_600_000;
+  await downLoop(retryAt, 7200, (log) => {
+    assert.ok(log.includes(`— waiting until ${new Date(retryAt + 60_000).toISOString()}`), log);
+  });
+});
+
+test('a reset past the usage ceiling falls back to the configured nap', async () => {
+  await downLoop(Date.now() + 7 * 24 * 3_600_000, 7200, (log) => {
+    assert.ok(!log.includes('waiting until'), log);
+  });
+});
+
+test('agent down with sub-second naps: the ceiling still ends the loop (exit 4)', async () => {
+  const { supervise } = await import('./supervise.ts');
+  const { EXIT } = await import('./runner.ts');
+  const sandbox = makeSandbox();
+  try {
+    const result = await supervise(sandbox.project, {
+      unitRunner: async () => ({ exit: EXIT.agentDown, message: 'agent could not run: limit', moved: false }),
+    });
+    assert.equal(result.exit, 4);
+  } finally {
+    sandbox.cleanup();
+  }
+});

@@ -7,17 +7,18 @@ import { parseArgs } from 'node:util';
 import { loadConfig } from '../config.ts';
 import { readRunning, tracePaths } from '../paths.ts';
 import { sendTelegram, telegramKeys } from '../notify.ts';
+import { projectStats } from '../stats.ts';
 import { addProject, listProjects, removeProject, resolveProject } from '../projects.ts';
-import { describeQueue, previewUnit, runUnit } from '../runner.ts';
+import { billing, describeQueue, previewUnit, runUnit } from '../runner.ts';
 import { baseAgentsDir, loadRegistry, registryProblems, standingRulesDrift, syncStandingRules } from '../agents.ts';
 import { runCases } from '../selftest.ts';
 import { createExample } from '../example.ts';
 import { lockHolder, requestPause, requestResume, requestStop, supervise } from '../supervise.ts';
 import { type TaskDoc } from '../task/parse.ts';
-import { loadTask, nextTaskId, saveTask } from '../task/task.ts';
+import { loadTask, nextTaskId, saveHumanTask } from '../task/task.ts';
 import { KINDS, type Kind } from '../task/transitions.ts';
 import { validateTask } from '../task/validate.ts';
-import { accept, answerQuestion, approve, comment, createTask, reopen, submit } from '../task/write.ts';
+import { accept, answerQuestion, approve, comment, createTask, reopen, revise, submit } from '../task/write.ts';
 import { transitionContext } from '../config.ts';
 
 const HELP = `harness — an autonomous task harness for Claude Code
@@ -33,6 +34,7 @@ Tasks (human actions — the same transitions the dashboard offers)
   harness submit  <T-NNN>                           draft → spec
   harness answer  <T-NNN> <Qn> <letter> [note]      answer an open question
   harness approve <T-NNN>                           planned → prototype (ui) | ready
+  harness revise  <T-NNN> <text>                    planned → plan, with what the plan should change
   harness comment <T-NNN> <text>                    prototype review → drafting
   harness accept  <T-NNN>                           prototype review → ready
   harness reopen  <T-NNN>                           parked → the status it was parked from
@@ -42,6 +44,7 @@ Loop
   harness unit                                      run exactly one unit (exit code = runner code)
   harness pause | resume | stop                     files read at the unit boundary
   harness status [--json]
+  harness stats [--json]                            units, time, tokens and API-equivalent cost per stage and task
   harness self-test                                 every contract case on a throwaway repo
 
 Agents and prompts
@@ -106,9 +109,11 @@ function act(change: (doc: TaskDoc) => TaskDoc): void {
   const path = taskPath(root, args[0]);
   const running = readRunning(tracePaths(root));
   if (running && running.task === args[0]) fail(`${args[0]} is in a running unit (${running.stage}); pause first`, 1);
+  // The runner sets HARNESS_LOOP for every unit: an agent may not act as the human through the CLI.
+  if (process.env.HARNESS_LOOP) fail('a human action cannot run inside a unit (HARNESS_LOOP is set)', 1);
   try {
     const next = change(loadTask(path).doc);
-    saveTask(path, next);
+    saveHumanTask(path, next);
     const fields = loadTask(path).fields;
     console.log(`${fields.id} · ${fields.status}${fields.prototype ? ` (${fields.prototype})` : ''}`);
   } catch (error) {
@@ -165,7 +170,8 @@ async function main(): Promise<void> {
         draft: values.draft ?? values.title,
         ...(values.kind ? { kind: values.kind as Kind } : {}),
       });
-      saveTask(join(tasks, `${id}.md`), doc);
+      if (process.env.HARNESS_LOOP) fail('a human action cannot run inside a unit (HARNESS_LOOP is set)', 1);
+      saveHumanTask(join(tasks, `${id}.md`), doc);
       console.log(`${id} · draft · ${join(tasks, `${id}.md`)}`);
       return;
     }
@@ -177,6 +183,11 @@ async function main(): Promise<void> {
       return act((doc) => accept(doc, transitionContext(loadConfig(project()))));
     case 'reopen':
       return act((doc) => reopen(doc, transitionContext(loadConfig(project()))));
+    case 'revise': {
+      const text = args.slice(1).join(' ');
+      if (!text) fail('revise <T-NNN> <what the plan should change>');
+      return act((doc) => revise(doc, text, transitionContext(loadConfig(project()))));
+    }
     case 'comment': {
       const text = args.slice(1).join(' ');
       if (!text) fail('comment <T-NNN> <text>');
@@ -288,6 +299,43 @@ async function main(): Promise<void> {
       } catch (error) {
         fail((error as Error).message, 1);
       }
+      return;
+    }
+    case 'stats': {
+      const root = project();
+      const stats = projectStats(root);
+      if (values.json) {
+        log(JSON.stringify(stats, null, 2));
+        return;
+      }
+      const usd = (value: number | null) => (value == null ? '—' : `$${value.toFixed(2)}`);
+      const kilo = (value: number) => (value >= 1000 ? `${(value / 1000).toFixed(1)}k` : String(value));
+      const clock = (ms: number) => `${Math.floor(ms / 60_000)}:${String(Math.round(ms / 1000) % 60).padStart(2, '0')}`;
+      const { total } = stats;
+      log(
+        `${basename(root)} · ${total.units} units · ${total.ok} passed · ${total.stops} parked · ` +
+          `${clock(total.durationMs)} agent time · ${kilo(total.tokens)} tokens · ${usd(total.costUsd)}*`,
+      );
+      log(`billing: ${billing(loadConfig(root)).note}`);
+      if (total.units > total.reported)
+        log(
+          `${total.units - total.reported} of ${total.units} units reported no usage: their cost is unknown, not zero`,
+        );
+      log(`\n${'stage'.padEnd(10)} ${'role'.padEnd(12)} units parked   time   tokens     cost*`);
+      for (const row of stats.byStage)
+        log(
+          `${row.key.padEnd(10)} ${row.role.padEnd(12)} ${String(row.units).padStart(5)} ${String(row.stops).padStart(6)} ` +
+            `${clock(row.durationMs).padStart(6)} ${kilo(row.tokens).padStart(8)} ${usd(row.costUsd).padStart(8)}`,
+        );
+      log(`\n${'task'.padEnd(6)} ${'status'.padEnd(12)} units   time   tokens     cost*  title`);
+      for (const row of stats.byTask)
+        log(
+          `${row.key.padEnd(6)} ${(row.status ?? '?').padEnd(12)} ${String(row.units).padStart(5)} ${clock(row.durationMs).padStart(6)} ` +
+            `${kilo(row.tokens).padStart(8)} ${usd(row.costUsd).padStart(8)}  ${row.title ?? ''}`,
+        );
+      if (stats.denials.length)
+        log(`\npermission denials: ${stats.denials.map((denial) => `${denial.tool} ×${denial.count}`).join(' · ')}`);
+      log('\n* the API-equivalent price claude -p reports; a subscription login is not billed per token');
       return;
     }
     case 'notify': {

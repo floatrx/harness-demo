@@ -61,6 +61,10 @@ harness/
 - **Narrow every check.** A check must not fail a unit for a defect the unit did not cause (see `contracts/gate.ts`).
 - **`examples/app` is a template, not a project.** The loop needs its own git repository (it branches and commits),
   so never run it with `--project examples/app`; keep the template green (`pnpm -C examples/app typecheck && … test`).
+- **Telegram sends only unique messages, and a test never reaches the real chat.** `notify` holds back a repeat (same
+  project + text, ids and timestamps normalized) for 6 h, caps the chat at 6 messages a minute, and a project folder
+  that no longer exists sends nothing. A test that runs the supervisor in-process stops it (`requestStop` + `await`)
+  before `sandbox.cleanup()`: a loop left running outlived its sandbox and flooded the user's chat (2026-10-26).
 - **Loop tests never touch a real project.** They run on `makeSandbox()` — a temp git repo with a bare `origin` —
   and set `HARNESS_HOME` when they need the registry. Never point a test at `examples/`.
 - **Every file write the dashboard or CLI makes is atomic** (`atomicWrite`: temp file + rename).

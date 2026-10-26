@@ -15,7 +15,7 @@ import { readRunning, tracePaths } from '@harness/core/paths';
 import { ProjectError, addProject, listProjects, removeProject } from '@harness/core/projects';
 import { lockHolder } from '@harness/core/supervise';
 import { type TaskDoc } from '@harness/core/task/parse';
-import { loadTask, nextTaskId, saveTask } from '@harness/core/task/task';
+import { loadTask, nextTaskId, saveHumanTask } from '@harness/core/task/task';
 import { KINDS, type Kind } from '@harness/core/task/transitions';
 import {
   OwnershipError,
@@ -26,13 +26,14 @@ import {
   comment,
   createTask,
   reopen,
+  revise,
   submit,
 } from '@harness/core/task/write';
 import { ProjectNotFound, findProject } from './board.ts';
 
 export const MUTATION_HEADER = 'x-harness';
 
-export const TASK_ACTIONS = ['submit', 'approve', 'accept', 'comment', 'answer', 'reopen'] as const;
+export const TASK_ACTIONS = ['submit', 'approve', 'revise', 'accept', 'comment', 'answer', 'reopen'] as const;
 export type TaskAction = (typeof TASK_ACTIONS)[number];
 
 export interface AnswerInput {
@@ -80,6 +81,11 @@ function change(action: TaskAction, doc: TaskDoc, body: Record<string, unknown>,
       return accept(doc, ctx);
     case 'reopen':
       return reopen(doc, ctx);
+    case 'revise': {
+      const text = typeof body.text === 'string' ? body.text.trim() : '';
+      if (!text) throw new HttpError(400, 'a revision needs a comment');
+      return revise(doc, text, ctx);
+    }
     case 'comment': {
       const text = typeof body.text === 'string' ? body.text.trim() : '';
       if (!text) throw new HttpError(400, 'a comment needs text');
@@ -132,7 +138,7 @@ export async function handleTaskAction(
       throw new HttpError(404, `no task ${taskId}`);
     }
     const next = change(action as TaskAction, doc, await readBody(request), project.path);
-    saveTask(file, next);
+    saveHumanTask(file, next);
     const fields = loadTask(file).fields;
     return json(200, { id: fields.id, status: fields.status, prototype: fields.prototype });
   } catch (error) {
@@ -154,7 +160,7 @@ export async function handleCreateTask(request: Request, projectId: string): Pro
       throw new HttpError(400, `kind is one of ${KINDS.join(', ')}`);
     const tasks = tracePaths(project.path).tasks;
     const id = nextTaskId(tasks);
-    saveTask(
+    saveHumanTask(
       join(tasks, `${id}.md`),
       createTask({ id, title, draft: draft || title, ...(kind ? { kind: kind as Kind } : {}) }),
     );

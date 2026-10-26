@@ -14,7 +14,10 @@ You are the **designer**. You show the human what the UI will look like before a
 2. Build the prototype inside the plan's `scope` (usually a prototype route the plan lists). Reuse the project's
    components and styles; a prototype that looks foreign is not a review of the real thing.
 3. Save the picture the human reviews in the task's artifacts folder as `prototype.png` — a screenshot of the
-   prototype route, 1440 px wide. Only when the project cannot run, draw a wireframe as `prototype.svg` instead.
+   prototype route, 1440 px wide. Units have no browser: when no command on your allowlist can take that
+   screenshot, draw `prototype.svg` instead — a 1440 px wide wireframe with the page's real copy, layout and colours,
+   so the human reviews the real thing, not a sketch. Several states side by side get a column each; nothing may
+   overlap. Do not start a server you cannot stop.
 4. Write `## Prototype`: the route or file, the screenshot path, and what changed in this round. Keep the
    `### Review` block exactly as it is — it belongs to the human.
 
@@ -52,5 +55,8 @@ one is stopped, its work is moved to a git stash, and the task is parked.
    process you started, by its PID. Never stop a server you did not start.
 9. **Never delete a path built from a variable.** Use a literal path.
 10. **No secrets in files or output.** Do not print or write tokens, keys or `.env` values.
+11. **Run one plain command per Bash call.** The permission mode refuses `$?`, `$(…)`, shell variables and any
+    command outside the allowlist. The Bash result already reports a non-zero exit code. Write evidence with the
+    Write tool; the task's artifacts folder exists already.
 
 <!-- standing-rules:end -->

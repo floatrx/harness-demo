@@ -4,11 +4,13 @@
 // - HEAD did not move — the runner commits, an agent never does;
 // - no remote-tracking ref moved — no push, no fetch;
 // - every newly dirty file is inside the unit's allowed pathspec;
-// - under `.harness/`, only the task's own file, its artifacts folder and the journal change.
+// - under `.harness/`, only the task's own file, its artifacts folder and the journal change — plus other task files
+//   whose content is exactly what a human wrote meanwhile (the human-write ledger), which are not the unit's doing.
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { currentBranch, dirty, git, head, remoteRefs, tryGit } from '../git.ts';
+import { isHumanWrite } from '../task/task.ts';
 
 export interface Snapshot {
   branch: string;
@@ -141,7 +143,8 @@ export function judgeScope(project: string, before: Snapshot, rules: ScopeRules)
     })
     .sort();
   for (const path of harnessChanged) {
-    if (!inScope(path, rules.harnessAllowed)) violations.push(`loop-owned file: ${path}`);
+    if (inScope(path, rules.harnessAllowed) || isHumanWrite(project, path, after.get(path))) continue;
+    violations.push(`loop-owned file: ${path}`);
   }
   return { violations, changed, harnessChanged };
 }
@@ -194,6 +197,7 @@ export function quarantine(
   for (const [path, content] of before.harness) {
     if (keep.includes(path)) continue;
     const current = after.get(path);
+    if (isHumanWrite(project, path, current)) continue;
     if (!current || !current.equals(content)) {
       mkdirSync(dirname(join(project, path)), { recursive: true });
       writeFileSync(join(project, path), content);
@@ -202,6 +206,7 @@ export function quarantine(
   }
   for (const path of after.keys()) {
     if (before.harness.has(path) || keep.includes(path) || inScope(path, allowedNew)) continue;
+    if (isHumanWrite(project, path, after.get(path))) continue;
     // A file the unit created where it may not write: renamed, so a stray `T-999.md` is no task.
     renameSync(join(project, path), join(project, `${path}.quarantined`));
     notes.push(`renamed ${path} → ${path}.quarantined`);

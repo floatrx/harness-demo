@@ -2,8 +2,11 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { describe, test } from 'node:test';
 import {
+  criterionLabel,
   getField,
   getSection,
+  normalizeBody,
+  putSection,
   openQuestions,
   parseCriteria,
   parseQuestions,
@@ -31,6 +34,7 @@ import {
   comment,
   createTask,
   reopen,
+  revise,
   submit,
   taskWriteViolations,
   writeSection,
@@ -166,6 +170,26 @@ describe('owned sections', () => {
     assert.match(text, /## Draft\nDraft text\.\n\n## Spec\nThe spec\.\n\n## Plan\nThe plan\.\n\n## Log\n/);
   });
 
+  test('a [closes] command is the first span after a colon, else the first span (pilot lesson 4)', () => {
+    const criteria = parseCriteria(
+      [
+        '1. [closes] `formatRelativeTime` is exported from `src/lib/x.ts`: `grep -q "export function" src/lib/x.ts`',
+        '2. [closes] The `Bookmark` type is unchanged: `! git diff main | grep -q KEY` (touches no `addedAt`).',
+        '3. **[closes]** `pnpm test` exits 0',
+        '4. [found] `pnpm dev` shows the label',
+      ].join('\n'),
+    );
+    assert.deepEqual(
+      criteria.map((criterion) => criterion.command),
+      ['grep -q "export function" src/lib/x.ts', '! git diff main | grep -q KEY', 'pnpm test', null],
+    );
+    assert.deepEqual(criteria.slice(0, 3).map(criterionLabel), [
+      '`formatRelativeTime` is exported from `src/lib/x.ts`',
+      'The `Bookmark` type is unchanged (touches no `addedAt`).',
+      'exits 0',
+    ]);
+  });
+
   test('taskWriteViolations flags foreign sections and fields', () => {
     const before = parseTask(fixture);
     const after = parseTask(fixture);
@@ -213,9 +237,9 @@ describe('transitions', () => {
     assert.equal(canTransition({ ...base, status: 'draft' }, 'spec', 'human'), true);
   });
 
-  test('planned goes to prototype for ui, ready otherwise; full autonomy skips the human', () => {
-    assert.deepEqual(humanTargets({ ...base, status: 'planned' }), ['ready']);
-    assert.deepEqual(humanTargets({ ...base, status: 'planned', kind: 'ui' }), ['prototype']);
+  test('planned goes to prototype for ui, ready otherwise, or back to the planner; full autonomy skips the human', () => {
+    assert.deepEqual(humanTargets({ ...base, status: 'planned' }), ['ready', 'plan']);
+    assert.deepEqual(humanTargets({ ...base, status: 'planned', kind: 'ui' }), ['prototype', 'plan']);
     const ctx = { autonomy: 'full' as const, mergeQaJudge: false, bounceCap: 2, deliverPr: false };
     assert.equal(findTransition({ ...base, status: 'planned' }, 'agent', 'auto-approve')?.target, undefined);
     assert.equal(findTransition({ ...base, status: 'planned' }, 'agent', 'auto-approve', ctx)?.target, 'ready');
@@ -272,6 +296,28 @@ describe('human actions', () => {
     assert.equal(getField(doc, 'parked'), null);
   });
 
+  test('revise sends a planned task back to the planner; the review block outlives the next plan', () => {
+    let doc = createTask({ id: 'T-001', title: 'Dates', draft: 'Show the date.', kind: 'logic' });
+    setField(doc, 'status', 'planned');
+    writeSection(doc, 'runner', 'Plan', 'First plan.');
+    assert.throws(() => revise(doc, '  '), /needs a comment/);
+    doc = revise(doc, 'criterion 5\nexits 1 when right');
+    assert.equal(getField(doc, 'status'), 'plan');
+    assert.match(
+      getSection(doc, 'Plan') ?? '',
+      /^First plan\.\n\n### Review\n- .* · 👤 revise: criterion 5 exits 1 when right\n$/,
+    );
+    assert.throws(() => revise(doc, 'again'), TransitionError);
+    const before = parseTask(serializeTask(doc));
+    const replanned = parseTask(serializeTask(doc));
+    writeSection(replanned, 'planner', 'Plan', 'Second plan.');
+    assert.match(getSection(replanned, 'Plan') ?? '', /^Second plan\.\n\n### Review\n- .* revise:/);
+    assert.deepEqual(taskWriteViolations(before, replanned, 'planner'), []);
+    const dropped = parseTask(serializeTask(doc));
+    writeSection(dropped, 'runner', 'Plan', 'Second plan, review gone.');
+    assert.deepEqual(taskWriteViolations(before, dropped, 'planner'), ['wrote ### Review in ## Plan']);
+  });
+
   test('the prototype round cap refuses one comment too many', () => {
     let doc = createTask({ id: 'T-001', title: 'Toggle', draft: 'A toggle.', kind: 'ui' });
     setField(doc, 'status', 'prototype');
@@ -313,6 +359,16 @@ describe('validate', () => {
     setField(doc, 'scope', []);
     writeSection(doc, 'runner', 'Questions', '');
     assert.ok(validateTask(doc).some((issue) => issue.field === 'scope'));
+  });
+
+  test('a tagged line that is not `N. [tag]` is named, not skipped (pilot lesson 8)', () => {
+    const doc = parseTask(fixture);
+    const body = getSection(doc, 'Acceptance criteria') ?? '';
+    putSection(doc, 'Acceptance criteria', normalizeBody(`${body}\n1a. [closes] Duplicates throw: \`pnpm test\``));
+    assert.match(
+      validateTask(doc).map((issue) => issue.message).join('\n'),
+      /not read as a criterion, number it `N\.`: 1a\. \[closes\] Duplicates throw/,
+    );
   });
 
   test('[closes] without a command', () => {

@@ -32,7 +32,8 @@ export const SECTION_OWNERS: Record<string, readonly Role[]> = {
   // Agents append questions; a human only answers them (answerQuestion).
   Questions: ['writer', 'planner'],
   Plan: ['planner'],
-  // The designer owns Prototype except its `### Review` block, which is human-owned (addReview).
+  // The designer owns Prototype and the planner Plan, except their `### Review` blocks, which are human-owned
+  // (addReview): prototype Accept / Comment, plan Revise.
   Prototype: ['designer'],
   'Acceptance criteria': ['writer', 'planner'],
   Log: ['runner'],
@@ -49,6 +50,9 @@ export class OwnershipError extends Error {
   override name = 'OwnershipError';
 }
 
+/** Sections that carry a human-owned `### Review` block at their end. */
+export const REVIEWED_SECTIONS: readonly string[] = ['Plan', 'Prototype'];
+
 export function ownsSection(role: Role, section: string): boolean {
   return role === 'runner' || (SECTION_OWNERS[section] ?? []).includes(role);
 }
@@ -56,9 +60,9 @@ export function ownsSection(role: Role, section: string): boolean {
 export function writeSection(doc: TaskDoc, role: Role, section: string, content: string): void {
   if (!ownsSection(role, section)) throw new OwnershipError(`${role} may not write ## ${section}`);
   let body = normalizeBody(content);
-  if (section === 'Prototype' && role !== 'runner') {
-    // Keep the human-owned review block whatever the designer writes.
-    const review = reviewBlock(getSection(doc, 'Prototype'));
+  if (REVIEWED_SECTIONS.includes(section) && role !== 'runner') {
+    // Keep the human-owned review block whatever the agent writes.
+    const review = reviewBlock(getSection(doc, section));
     body = normalizeBody(`${body.replace(/^### Review[\s\S]*$/m, '')}\n${review}`);
   }
   putSection(doc, section, body);
@@ -80,7 +84,8 @@ export function taskWriteViolations(before: TaskDoc, after: TaskDoc, role: Role)
     const b = getSection(after, name);
     if (a === b) continue;
     if (!ownsSection(role, name)) violations.push(`wrote ## ${name}`);
-    else if (name === 'Prototype' && reviewBlock(a) !== reviewBlock(b)) violations.push('wrote ### Review');
+    else if (REVIEWED_SECTIONS.includes(name) && reviewBlock(a) !== reviewBlock(b))
+      violations.push(`wrote ### Review in ## ${name}`);
     else if (name === 'Questions') {
       const answered = parseQuestions(a).filter((question) => question.state === 'answered');
       const now = parseQuestions(b);
@@ -170,12 +175,23 @@ export function approve(doc: TaskDoc, ctx = DEFAULT_CONTEXT): TaskDoc {
   return next;
 }
 
-export function addReview(doc: TaskDoc, entry: string, date = new Date()): void {
-  const body = getSection(doc, 'Prototype') ?? '';
+export function addReview(doc: TaskDoc, entry: string, date = new Date(), section = 'Prototype'): void {
+  const body = getSection(doc, section) ?? '';
   const review = reviewBlock(body);
   const head = body.slice(0, body.length - review.length).replace(/\s+$/, '');
   const block = review ? `${review.replace(/\s+$/, '')}\n` : '### Review\n';
-  putSection(doc, 'Prototype', normalizeBody(`${head}\n\n${block}- ${stamp(date)} · 👤 ${entry}`));
+  putSection(doc, section, normalizeBody(`${head}\n\n${block}- ${stamp(date)} · 👤 ${entry}`));
+}
+
+/** The human sends a plan back with what to change (pilot lesson: approve was the only way out of `planned`). */
+export function revise(doc: TaskDoc, text: string, ctx = DEFAULT_CONTEXT): TaskDoc {
+  const note = text.replace(/\s+/g, ' ').trim();
+  if (!note) throw new TransitionError('a revision needs a comment: what should the plan change?');
+  const next = cloneDoc(doc);
+  const target = human(next, 'revise', ctx);
+  addReview(next, `revise: ${note}`, new Date(), 'Plan');
+  moveTo(next, target, 'human');
+  return next;
 }
 
 export function accept(doc: TaskDoc, ctx = DEFAULT_CONTEXT): TaskDoc {

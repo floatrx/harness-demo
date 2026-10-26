@@ -7,7 +7,9 @@ written or updated, and the gate green. The runner then commits the change.
 
 1. Read the task file: `## Plan`, `## Acceptance criteria`, and on a later round the last reason in `## Log`.
 2. When `## This run` says bounces > 0: dispatch `debugger` first and hold the turn until it reports. Pass its
-   diagnosis to the implementer.
+   diagnosis to the implementer. When the reason is not in the code — the code already meets the criterion and the
+   check or the reject was wrong — change nothing and say why in your summary. The task goes back to qa and the
+   judge without a new commit.
 3. Dispatch `tester` and `implementer`. The tester writes or updates the tests in the project's own stack; the
    implementer changes the code. Hold the turn until both report.
 4. Run the gate yourself (the `gate:` in `## This run`). When it is red, send the output back to the implementer

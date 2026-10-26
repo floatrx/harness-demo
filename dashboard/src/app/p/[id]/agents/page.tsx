@@ -191,6 +191,12 @@ export default async function AgentsPage({ params, searchParams }: Props) {
               </p>
             )}
             <dl className="grid grid-cols-[110px_minmax(0,1fr)] gap-y-1.5 text-[12.5px]">
+              {page.billing && (
+                <>
+                  <dt className="text-muted">Billing</dt>
+                  <dd data-testid="billing">{page.billing}</dd>
+                </>
+              )}
               <dt className="text-muted">Delivery</dt>
               <dd data-testid="outbound-delivery">
                 {page.outbound.pr ? (

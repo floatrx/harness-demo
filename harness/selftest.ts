@@ -13,7 +13,7 @@ import { dirty } from './git.ts';
 import { type UnitResult, runUnit } from './runner.ts';
 import { supervise } from './supervise.ts';
 import { type Sandbox, makeSandbox, readLog, seedTask } from './testkit/sandbox.ts';
-import { accept, addReview, answerQuestion, approve, comment, submit } from './task/write.ts';
+import { accept, addReview, answerQuestion, approve, comment, reopen, submit } from './task/write.ts';
 import { listTaskFiles, loadTask, saveTask } from './task/task.ts';
 
 export interface Case {
@@ -90,6 +90,8 @@ export const CASES: Case[] = [
           .split('\n')
           .filter(Boolean);
         expect(commits.length === 1, `${commits.length} commits on ${task.branch}`);
+        // The runner makes the artifacts folder: `mkdir` is not on the agent's allowlist.
+        expect(existsSync(join(sandbox.project, '.harness/artifacts/T-002')), 'no artifacts folder');
         return `${trail} · 1 commit on ${task.branch}`;
       }),
   },
@@ -242,6 +244,148 @@ export const CASES: Case[] = [
         const log = readLog(sandbox, id);
         expect(/criterion 2 `test -f src\/missing\.txt` exit 1/.test(log), 'closing reason missing from the log');
         return `judge CONFIRMED → closing red (criterion 2) → implementing · bounces 1`;
+      }),
+  },
+  {
+    name: 'plan contract: a [closes] criterion whose command span is a name parks the plan (pilot lesson 4)',
+    run: () =>
+      withSandbox({}, async (sandbox) => {
+        const id = seedTask(sandbox, { status: 'plan', scope: ['src/**'] });
+        sandbox.scenario({
+          steps: {
+            plan: [
+              [
+                { default: true },
+                {
+                  section: 'Acceptance criteria',
+                  content: [
+                    '1. [closes] `formatThing` is exported from `src/x.ts`',
+                    '2. [closes] `src/x.test.ts` passes: `test -f src/x.ts`',
+                  ].join('\n'),
+                },
+              ],
+            ],
+          },
+        });
+        const result = await runUnit(sandbox.project, sandbox.agent);
+        const task = sandbox.task(id).fields;
+        expect(result.exit === 1 && task.status === 'parked', `exit ${result.exit}, status ${task.status}`);
+        expect(/criterion 1: `formatThing` is not a command/.test(task.parked ?? ''), `parked: ${task.parked}`);
+        expect(!/criterion 2/.test(task.parked ?? ''), `criterion 2 picked the wrong span: ${task.parked}`);
+        return `parked: ${task.parked}`;
+      }),
+  },
+  hardStop(
+    'implement: a first round with no change is barren and parks',
+    [{ say: 'Nothing to do.' }],
+    /no change inside scope/,
+  ),
+  {
+    name: 'reopened round: the branch holds the work, no change → qa → done; Reopen reset bounces (pilot lesson 4)',
+    run: () =>
+      withSandbox({}, async (sandbox) => {
+        const id = seedTask(sandbox, READY);
+        sandbox.scenario({
+          steps: {
+            implement: [[{ default: true }], [{ exit: 1 }], [{ say: 'The code already meets every criterion.' }]],
+            qa: [[{ say: 'qa: FAIL' }]],
+          },
+        });
+        await supervise(sandbox.project, { ...sandbox.agent, onceThrough: true });
+        expect(
+          sandbox.task(id).fields.status === 'parked',
+          `status ${sandbox.task(id).fields.status}, expected parked`,
+        );
+        const path = sandbox.taskPath(id);
+        saveTask(path, reopen(loadTask(path).doc));
+        expect(sandbox.task(id).fields.bounces === 0, 'Reopen kept the bounces');
+        await supervise(sandbox.project, { ...sandbox.agent, onceThrough: true });
+        const task = sandbox.task(id).fields;
+        expect(task.status === 'done', `status ${task.status}`);
+        expect(/no change this round/.test(readLog(sandbox, id)), 'the no-change round is not in the log');
+        return 'FAIL → crash → parked → Reopen (bounces 0) → no change → qa → judge → done';
+      }),
+  },
+  {
+    name: "a human approves another task during a unit: not the unit's doing, kept by quarantine (pilot lesson 7)",
+    run: () =>
+      withSandbox({}, async (sandbox) => {
+        seedTask(sandbox, { id: 'T-001', status: 'planned', scope: ['src/**'], closes: ['true'] });
+        seedTask(sandbox, { id: 'T-002', status: 'spec' });
+        seedTask(sandbox, { id: 'T-003', status: 'spec' });
+        const write = new URL('./task/write.ts', import.meta.url).pathname;
+        const task = new URL('./task/task.ts', import.meta.url).pathname;
+        const other = '"$HARNESS_PROJECT/.harness/tasks/T-001.md"';
+        // A human write at the same time as the unit: through the core, so it lands in the ledger.
+        const human = `node --input-type=module -e "import { approve } from '${write}'; import { loadTask, saveHumanTask } from '${task}'; const p = process.argv[1]; saveHumanTask(p, approve(loadTask(p).doc));" ${other}`;
+        // An agent edit of the same file: no ledger line, so it is still the unit's fault.
+        const agent = `node -e "require('node:fs').appendFileSync(process.argv[1], 'agent was here')" ${other}`;
+        sandbox.scenario({
+          steps: {
+            'T-002:spec': [[{ default: true }, { exec: human }]],
+            'T-003:spec': [[{ default: true }, { exec: agent }]],
+          },
+        });
+        const first = await runUnit(sandbox.project, sandbox.agent);
+        expect(first.exit === 0, `unit 1 exit ${first.exit}: ${first.message}`);
+        expect(sandbox.task('T-002').fields.status === 'plan', `T-002 ${sandbox.task('T-002').fields.status}`);
+        expect(sandbox.task('T-001').fields.status === 'ready', `T-001 ${sandbox.task('T-001').fields.status}`);
+        // Finishing beats starting: T-001 (now ready) and T-002's plan run before T-003's spec.
+        let second = await runUnit(sandbox.project, sandbox.agent);
+        for (let n = 0; second.task !== 'T-003' && n < 8; n++) second = await runUnit(sandbox.project, sandbox.agent);
+        const parked = sandbox.task('T-003').fields;
+        expect(second.exit === 1 && parked.status === 'parked', `T-003 unit exit ${second.exit}, ${parked.status}`);
+        expect(/loop-owned file: \.harness\/tasks\/T-001\.md/.test(parked.parked ?? ''), `parked: ${parked.parked}`);
+        expect(sandbox.task('T-001').fields.status !== 'planned', 'quarantine undid the human approve');
+        expect(!readFileSync(sandbox.taskPath('T-001'), 'utf8').includes('agent was here'), 'the agent edit survived');
+        return 'human approve during unit 1 kept · agent edit in unit 2 parked and restored to the human state';
+      }),
+  },
+  {
+    name: 'an unread `1a.` criterion parks a plan, and a revised plan unit still runs to fix it (pilot lesson 8)',
+    run: () =>
+      withSandbox({}, async (sandbox) => {
+        const id = seedTask(sandbox, { status: 'plan', scope: ['src/**'] });
+        const bad =
+          '1. [closes] The file exists: `test -f src/feature.txt`\n1a. [closes] It is not empty: `test -s src/feature.txt`';
+        sandbox.scenario({ steps: { plan: [[{ default: true }, { section: 'Acceptance criteria', content: bad }]] } });
+        const first = await runUnit(sandbox.project, sandbox.agent);
+        const parked = sandbox.task(id).fields;
+        expect(
+          first.exit === 1 && /not read as a criterion.*1a\./.test(parked.parked ?? ''),
+          `parked: ${parked.parked}`,
+        );
+        const path = sandbox.taskPath(id);
+        saveTask(path, reopen(loadTask(path).doc));
+        // The reopened plan still carries the bad line; the unit must run anyway (the default plan rewrites it).
+        const second = await runUnit(sandbox.project, sandbox.agent);
+        expect(second.exit === 0, `second plan unit exit ${second.exit}: ${second.message}`);
+        expect(sandbox.task(id).fields.status === 'planned', `status ${sandbox.task(id).fields.status}`);
+        return `parked on 1a. → reopened → the plan unit ran and wrote a readable list → planned`;
+      }),
+  },
+  {
+    name: 'bounce round: no change after a wrong reject goes back to qa, and the judge decides again (pilot lesson 4)',
+    run: () =>
+      withSandbox({}, async (sandbox) => {
+        const id = seedTask(sandbox, READY);
+        sandbox.scenario({
+          steps: {
+            implement: [[{ default: true }], [{ say: 'Nothing to fix: the code meets every criterion.' }]],
+            judge: [[{ say: 'judge: REJECTED' }]],
+          },
+        });
+        await supervise(sandbox.project, { ...sandbox.agent, onceThrough: true });
+        const task = sandbox.task(id).fields;
+        expect(task.status === 'done' && task.bounces === 1, `status ${task.status} bounces ${task.bounces}`);
+        expect(/no change this round/.test(readLog(sandbox, id)), 'the no-change round is not in the log');
+        const commits = sandbox
+          .git(['rev-list', `main..${task.branch}`])
+          .trim()
+          .split('\n')
+          .filter(Boolean);
+        expect(commits.length === 1, `${commits.length} commits`);
+        return `REJECTED → implement, no change → qa → judge CONFIRMED → done · 1 commit`;
       }),
   },
   {

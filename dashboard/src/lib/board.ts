@@ -1,10 +1,10 @@
 /* Server-only: builds the board model from the harness core. Nothing here re-implements a status rule —
    statuses, transitions, parsing and the queue all come from @harness/core. */
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { basename } from 'node:path';
 import { loadConfig, transitionContext } from '@harness/core/config';
-import { readRunning, tracePaths } from '@harness/core/paths';
+import { readHandoffs as readCoreHandoffs, readRunning, tracePaths } from '@harness/core/paths';
 import { type Project, listProjects } from '@harness/core/projects';
 import { nextStep, stageFor } from '@harness/core/queue';
 import { lockHolder } from '@harness/core/supervise';
@@ -103,33 +103,9 @@ export const findProject = (id: string): Project => {
   return project;
 };
 
-/* A refused command can carry a token or a URL (`Bash(curl -H "Authorization: …")`). Every handoff the dashboard
-   reads keeps the tool name only — the dock sends these over SSE to the browser (plan § Security). */
-const withoutCommands = (handoff: Handoff): Handoff =>
-  handoff.usage?.permissionDenials
-    ? {
-        ...handoff,
-        usage: {
-          ...handoff.usage,
-          permissionDenials: handoff.usage.permissionDenials.map((denial) => denial.split('(')[0]?.trim() || '?'),
-        },
-      }
-    : handoff;
-
-export const readHandoffs = (projectPath: string): Handoff[] => {
-  const file = tracePaths(projectPath).handoffs;
-  if (!existsSync(file)) return [];
-  return readFileSync(file, 'utf8')
-    .split('\n')
-    .filter(Boolean)
-    .flatMap((line) => {
-      try {
-        return [withoutCommands(JSON.parse(line) as Handoff)];
-      } catch {
-        return [];
-      }
-    });
-};
+/* One reader for the whole stack: the core strips refused commands from permission denials (they can carry a token),
+   so nothing the dashboard sends to the browser holds one. */
+export const readHandoffs = (projectPath: string): Handoff[] => readCoreHandoffs(tracePaths(projectPath)) as Handoff[];
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const shortDate = (iso: string) => new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
@@ -206,6 +182,8 @@ function cardMeta(
 const dragMoves = (task: TransitionTask, ctx: TransitionContext) =>
   HUMAN_TRANSITIONS.flatMap((transition) => {
     if (transition.from !== task.status || (transition.guard && !transition.guard(task, ctx))) return [];
+    // Revise needs a comment, so it is a drawer action (Plan tab), not a drop.
+    if (transition.action === 'revise') return [];
     const target = transition.to(task);
     return target && target !== task.status ? [{ target, action: transition.action }] : [];
   });

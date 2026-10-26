@@ -121,7 +121,9 @@ function defaultStep(): void {
       break;
     case 'plan':
       editTask((doc) => {
-        putSection(doc, 'Plan', normalizeBody('1. Write the feature file.'));
+        // Like a real planner: rewrite the plan, keep the human-owned `### Review` block (plan Revise).
+        const review = reviewBlock(getSection(doc, 'Plan') ?? '');
+        putSection(doc, 'Plan', normalizeBody(`1. Write the feature file.\n\n${review}`));
         putSection(doc, 'Acceptance criteria', normalizeBody(`1. **[closes]** \`${defaults.closes}\` exits 0`));
         setField(doc, 'scope', defaults.scope);
         if (defaults.gate) setField(doc, 'gate', defaults.gate);

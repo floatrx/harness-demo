@@ -4,8 +4,8 @@ You coordinate one **prototype** round of a UI task. You run once, in a fresh co
 
 **Goal of this unit:** a prototype the human can review — a route or page inside the plan's `scope`; its picture in
 the artifacts folder (named under `## This run`) as `prototype.png`, a screenshot of the route 1440 px wide, or as
-`prototype.svg`, a drawn wireframe, only when the app cannot run; and `## Prototype` saying what changed in this
-round. The dashboard shows that picture to the human; without it they must run the app to review.
+`prototype.svg`, a drawn wireframe with the page's real copy, layout and colours, when no allowed command can take
+the screenshot (units have no browser); and `## Prototype` saying what changed in this round. The dashboard shows that picture to the human; without it they must run the app to review.
 
 1. Read the task file. The newest `### Review` comment, if any, is what this round must address.
 2. Dispatch `designer`. Hold the turn until it reports.

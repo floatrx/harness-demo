@@ -226,7 +226,11 @@ export interface Criterion {
   n: number;
   tag: CriterionTag;
   text: string;
-  /** The first backtick span of a `[closes]` criterion: the shell command that proves it. */
+  /**
+   * The shell command that proves a `[closes]` criterion: the first backtick span after a colon
+   * (`… is exported from \`src/x.ts\`: \`grep -q …\``), else the first backtick span (`\`pnpm test\` passes`).
+   * Pilot lesson 4: a real planner backticks names before the command, and the first span was `formatRelativeTime`.
+   */
   command: string | null;
 }
 
@@ -240,16 +244,44 @@ export function parseCriteria(body: string | undefined): Criterion[] {
     if (!match) return [];
     const tag = match[2] as CriterionTag;
     const text = match[3] as string;
-    const command = tag === 'closes' ? (/`([^`]+)`/.exec(text)?.[1] ?? null) : null;
+    const command = tag === 'closes' ? provingCommand(text) : null;
     return [{ n: Number(match[1]), tag, text, command }];
   });
 }
 
-// ---- prototype review ---------------------------------------------------
+/**
+ * Lines that carry a criterion tag but do not parse as `N. [tag] …` — a `1a.` or a bullet. The loop would
+ * silently skip them, `[closes]` commands included (pilot lesson 8), so validation names them instead.
+ */
+export function unreadCriteria(body: string | undefined): string[] {
+  if (!body) return [];
+  return body
+    .split('\n')
+    .filter((line) => /\[(closes|found|process)\]/.test(line) && !CRITERION.test(line))
+    .map((line) => line.trim());
+}
 
-/** The `### Review` subsection of Prototype (human-owned), or '' when absent. */
-export function reviewBlock(prototypeBody: string | undefined): string {
-  if (!prototypeBody) return '';
-  const at = prototypeBody.search(/^### Review\s*$/m);
-  return at === -1 ? '' : prototypeBody.slice(at);
+function provingCommand(text: string): string | null {
+  const spans = [...text.matchAll(/`([^`]+)`/g)];
+  const afterColon = spans.find((span) => /:\s*$/.test(text.slice(0, span.index)));
+  return (afterColon ?? spans[0])?.[1] ?? null;
+}
+
+/** A criterion's text without its command span, for a list that shows the command beside it. */
+export function criterionLabel(criterion: Criterion): string {
+  if (!criterion.command) return criterion.text.trim();
+  return criterion.text
+    .replace(`\`${criterion.command}\``, '')
+    .replace(/\s*:\s*$|:\s+(?=\()/, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// ---- review blocks (Plan, Prototype) ---------------------------------------------------
+
+/** The `### Review` subsection at the end of Plan or Prototype (human-owned), or '' when absent. */
+export function reviewBlock(body: string | undefined): string {
+  if (!body) return '';
+  const at = body.search(/^### Review\s*$/m);
+  return at === -1 ? '' : body.slice(at);
 }

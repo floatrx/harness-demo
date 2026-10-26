@@ -4,7 +4,7 @@ import { ProjectNotFound, findProject } from '@/lib/board';
 import { cn } from '@/lib/cn';
 import { clockDuration, tokens, usd } from '@/lib/format';
 import { loadTracePage } from '@/lib/unit-detail';
-import { EXIT_LABEL } from '@/lib/units';
+import { EXIT_LABEL } from '@harness/core/stats';
 import { PageHeader } from '@/components/shell/page-header';
 import { AgentLane } from '@/components/trace/agent-lane';
 import { UnitList } from '@/components/trace/unit-list';

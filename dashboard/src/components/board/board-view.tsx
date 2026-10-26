@@ -89,6 +89,9 @@ export const BoardView = ({ cards, projectId, selectedId }: Props) => {
 
   return (
     <DndContext
+      // A stable id: dnd-kit numbers its aria-describedby from a module counter, which differs between the server
+      // render and hydration and made every board load log a hydration mismatch.
+      id="board"
       sensors={sensors}
       collisionDetection={collisionDetection}
       measuring={MEASURING}

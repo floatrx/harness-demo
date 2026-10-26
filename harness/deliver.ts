@@ -9,7 +9,7 @@ import { checkBranch } from './contracts/branch.ts';
 import { type RunResult, run, tryGit } from './git.ts';
 import { type HandoffRecord, type TracePaths, appendHandoff, readHandoffs } from './paths.ts';
 import { scrubSecrets } from './secrets.ts';
-import { getSection, parseCriteria, setField } from './task/parse.ts';
+import { criterionLabel, getSection, parseCriteria, setField } from './task/parse.ts';
 import { type LoadedTask, saveTask } from './task/task.ts';
 import { appendLog, moveTo } from './task/write.ts';
 
@@ -81,7 +81,7 @@ export function prBody(
     `## Acceptance`,
     ...criteria.map((criterion) =>
       criterion.tag === 'closes'
-        ? `- ✓ \`${criterion.command ?? '?'}\` — ${criterion.text.replace(/`[^`]+`\s*/, '').trim() || 'exits 0'}`
+        ? `- ✓ \`${criterion.command ?? '?'}\` — ${criterionLabel(criterion) || 'exits 0'}`
         : `- [ ] [${criterion.tag}] ${criterion.text} — for a human to check`,
     ),
     ...(criteria.some((criterion) => criterion.tag === 'closes')

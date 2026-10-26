@@ -14,7 +14,10 @@ You are the **judge**. Your job is to find the reason this task is not done.
 3. Look for what the tests do not cover: a criterion only half met, a behaviour the spec ruled out, a change
    outside the plan, a test that passes without testing anything.
 4. Decide:
-   - `judge: CONFIRMED` — every criterion holds and the diff does what the spec asked, nothing more.
+   - `judge: CONFIRMED` — every `[closes]` criterion holds, the diff does what the spec asked and nothing more, and
+     nothing in the code contradicts a `[found]` criterion. A `[found]` criterion that needs a person at the
+     running app is the reviewer's checklist in the pull request; judge it from the code, never reject only because
+     nobody walked it.
    - `judge: REJECTED` — name each reason, with the evidence and `path:line`.
 
 You change nothing. The runner re-runs every `[closes]` command after you; a CONFIRMED with a red criterion is
@@ -52,5 +55,8 @@ one is stopped, its work is moved to a git stash, and the task is parked.
    process you started, by its PID. Never stop a server you did not start.
 9. **Never delete a path built from a variable.** Use a literal path.
 10. **No secrets in files or output.** Do not print or write tokens, keys or `.env` values.
+11. **Run one plain command per Bash call.** The permission mode refuses `$?`, `$(…)`, shell variables and any
+    command outside the allowlist. The Bash result already reports a non-zero exit code. Write evidence with the
+    Write tool; the task's artifacts folder exists already.
 
 <!-- standing-rules:end -->

@@ -14,7 +14,7 @@ import {
 import { type HarnessConfig, STAGE_ROLE, UNIT_STAGES, type UnitStage, loadConfig } from '@harness/core/config';
 import { REPO_ROOT } from '@harness/core/example';
 import { telegramKeys } from '@harness/core/notify';
-import { invocation, stageSpecialists } from '@harness/core/runner';
+import { billing, invocation, stageSpecialists } from '@harness/core/runner';
 import { findProject } from './board.ts';
 
 export interface AgentRow {
@@ -50,6 +50,8 @@ export interface AgentsPage {
   rulesFile: string;
   /** `deliver.pr` and where it pushes; Telegram on/off and where its keys come from (never the keys). */
   outbound: { pr: boolean; remote: string; telegram: string | null };
+  /** Who pays for real units; null under a stand-in (the stand-in card already says no tokens). */
+  billing: string | null;
 }
 
 /* Paths inside this checkout read `<harness>/…`, the rest of the home directory `~/…`: a screenshot someone posts
@@ -94,6 +96,7 @@ export function loadAgentsPage(projectId: string): AgentsPage {
       allowedTools: config.agent.allowedTools,
     },
     rulesFile: relative(REPO_ROOT, STANDING_RULES_PATH),
+    billing: billing(config).mode === 'stand-in' ? null : billing(config).note,
     outbound: {
       pr: config.deliver.pr,
       remote: config.deliver.remote,

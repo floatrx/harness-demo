@@ -48,6 +48,7 @@ const { values: args } = parseArgs({
 
 const DASHBOARD = join(REPO_ROOT, 'dashboard');
 const FAKE = join(REPO_ROOT, 'harness', 'testkit', 'fake-agent.ts');
+const FAKE_GH = join(REPO_ROOT, 'harness', 'testkit', 'fake-gh.ts');
 const OUT = resolve(args.out ?? join(DASHBOARD, 'e2e', 'shots'));
 const DOCS = join(REPO_ROOT, 'docs', 'screenshots');
 const WIDE = { width: 1440, height: 900 };
@@ -353,7 +354,18 @@ try {
   await page.goto(board(projectId));
   await shot(page, 'dragged-then-parked');
 
-  // 6. A UI task: approve the plan, review the prototype, comment, accept.
+  // 6. A UI task: send the plan back once, approve the new plan, review the prototype, comment, accept.
+  await page.goto(board(projectId, '?t=T-001'));
+  await page.getByTestId('plan-review').waitFor();
+  await shot(page, 'plan-review');
+  await page.getByLabel('Comment for the planner').fill('Name the empty state in the plan: what shows when nothing matches.');
+  await page.getByRole('button', { name: 'Request changes' }).click();
+  // The review entry and `status: plan` land in one write, so the entry proves the revise before the re-plan.
+  await until('the revise comment in ## Plan', () =>
+    /### Review\n- .* · 👤 revise: Name the empty state/.test(readFileSync(join(paths.tasks, 'T-001.md'), 'utf8')),
+  );
+  await until('T-001 to be planned again', statusIs('T-001', 'planned'));
+  await page.goto(board(projectId));
   await page.locator('[data-task="T-001"] [data-testid="card-action"]').click();
   await until('the first prototype round', () => statusOf('T-001').prototype === 'review');
   await page.goto(board(projectId, '?t=T-001'));
@@ -429,7 +441,41 @@ try {
   await page.goto(board(projectId));
   await shot(page, 'stopped');
 
-  // 11. The 950 px check: nothing scrolls sideways at the page level (the board scrolls inside its own lane).
+  // 11. Delivery: T-002 to done, then deliver.pr on (a local bare origin, the fake gh) and one runner step delivers
+  //     T-001 only — the board shows a Delivered card with its pull request next to a Done card with "PR next".
+  await page.locator('[data-task="T-002"] [data-testid="card-action"]').click();
+  await until('T-002 to be approved', statusIs('T-002', 'ready'), 10_000);
+  await page.getByTestId('supervisor-start').click();
+  await until('T-002 to be done', statusIs('T-002', 'done'));
+  await page.goto(board(projectId));
+  await page.getByTestId('supervisor-stop').click();
+  await until('the supervisor to stop', () => lockHolder(dest) === null, 60_000);
+  const git = (...gitArgs: string[]) => execFileSync('git', gitArgs, { cwd: dest, stdio: 'pipe' });
+  const origin = join(root, 'origin.git');
+  execFileSync('git', ['init', '--quiet', '--bare', origin]);
+  git('checkout', '--quiet', 'main');
+  git('remote', 'add', 'origin', origin);
+  const delivering = JSON.parse(readFileSync(configPath, 'utf8')) as Record<string, unknown>;
+  writeFileSync(configPath, `${JSON.stringify({ ...delivering, deliver: { pr: true, remote: 'origin' } }, null, 2)}\n`);
+  git('commit', '--quiet', '-am', 'e2e: deliver pull requests');
+  git('push', '--quiet', '-u', 'origin', 'main');
+  execFileSync(process.execPath, [join(REPO_ROOT, 'harness', 'bin', 'harness.ts'), 'unit', '--project', dest], {
+    stdio: 'pipe',
+    env: {
+      ...process.env,
+      HARNESS_HOME: home,
+      HARNESS_GH: `HARNESS_FAKE_GH_LOG=${JSON.stringify(join(root, 'gh.log'))} node ${JSON.stringify(FAKE_GH)}`,
+      TELEGRAM_BOT_TOKEN: '',
+    },
+  });
+  if (statusOf('T-001').status !== 'delivered') problems.push(`T-001 is ${statusOf('T-001').status}, not delivered`);
+  await page.goto(board(projectId, '?t=T-001'));
+  await page.getByTestId('drawer-pr').waitFor();
+  const pending = await page.locator('[data-task="T-002"]').innerText();
+  if (!/PR next/.test(pending)) problems.push('the done card T-002 does not say "PR next"');
+  await shot(page, 'delivered', 'delivered');
+
+  // 12. The 950 px check: nothing scrolls sideways at the page level (the board scrolls inside its own lane).
   await page.setViewportSize(NARROW);
   for (const [name, url] of [
     ['projects', `${base}/projects`],

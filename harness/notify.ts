@@ -7,16 +7,24 @@
 // earlier source switches notifications off (the test sandbox and the e2e walkthrough do that).
 //
 // A failure never fails a unit: one line in progress.log, with every secret scrubbed out.
+//
+// Only unique messages (user, 2026-10-26, after a test loop sent the same line dozens of times): the same text for the
+// same project is sent once per DEDUPE_MS, and the whole chat gets at most BURST_MAX messages per BURST_MS. A project
+// whose folder no longer exists sends nothing — that is how a deleted test sandbox reached the real chat.
 
-import { existsSync, readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import type { HarnessConfig, NotifyEvent } from './config.ts';
 import { type TracePaths, appendProgress } from './paths.ts';
 import { harnessHome, listProjects } from './projects.ts';
 import { scrubSecrets } from './secrets.ts';
-import type { TaskFields } from './task/task.ts';
+import { type TaskFields, atomicWrite } from './task/task.ts';
 
 const TIMEOUT_MS = 5000;
+const DEDUPE_MS = 6 * 3_600_000;
+const BURST_MS = 60_000;
+const BURST_MAX = 6;
 
 export interface TelegramKeys {
   token: string;
@@ -92,13 +100,59 @@ export async function sendTelegram(keys: TelegramKeys, html: string): Promise<{ 
   }
 }
 
+/** Ids and clock times that make two copies of one message look different. */
+export function messageKey(project: string, text: string): string {
+  const normal = text
+    .replace(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, '<id>')
+    .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?Z?/g, '<time>');
+  return createHash('sha256').update(`${project}\n${normal}`).digest('hex').slice(0, 32);
+}
+
+type SentLedger = { sent: Record<string, number>; burst: number[] };
+
+/** Whether this message may go now; records it when it may. The ledger is `$HARNESS_HOME/notify-sent.json`. */
+export function admitMessage(key: string, now = Date.now()): { ok: true } | { ok: false; why: string } {
+  const file = join(harnessHome(), 'notify-sent.json');
+  let ledger: SentLedger = { sent: {}, burst: [] };
+  try {
+    if (existsSync(file)) {
+      const read = JSON.parse(readFileSync(file, 'utf8')) as Partial<SentLedger>;
+      ledger = { sent: read.sent ?? {}, burst: read.burst ?? [] };
+    }
+  } catch {
+    // a broken ledger starts over: worst case, one repeat
+  }
+  const sent = Object.fromEntries(Object.entries(ledger.sent).filter(([, at]) => now - at < DEDUPE_MS));
+  const burst = ledger.burst.filter((at) => now - at < BURST_MS);
+  const last = sent[key];
+  const verdict =
+    last !== undefined
+      ? ({ ok: false, why: `same message sent ${Math.round((now - last) / 60_000)} min ago` } as const)
+      : burst.length >= BURST_MAX
+        ? ({ ok: false, why: `burst cap: ${BURST_MAX} messages in the last minute` } as const)
+        : ({ ok: true } as const);
+  if (verdict.ok) {
+    sent[key] = now;
+    burst.push(now);
+  }
+  mkdirSync(harnessHome(), { recursive: true });
+  atomicWrite(file, `${JSON.stringify({ sent, burst })}\n`);
+  return verdict;
+}
+
 /** The one entry point the loop uses. Off (no keys, or the event is not in `notify.events`) → nothing happens. */
 export async function notify(project: string, config: HarnessConfig, paths: TracePaths, notice: Notice): Promise<void> {
   if (!config.notify.events.includes(notice.event)) return;
+  if (!existsSync(project)) return;
   const keys = telegramKeys(project);
   if (!keys) return;
   const link = notice.url ? `\n<a href="${escape(notice.url)}">${escape(notice.url)}</a>` : '';
   const html = scrubSecrets(`<b>${escape(projectName(project))}</b> · ${escape(notice.text)}${link}`, [keys.token]);
+  const admitted = admitMessage(messageKey(project, html));
+  if (!admitted.ok) {
+    appendProgress(paths, `notify · ${notice.event} held back: ${admitted.why}`);
+    return;
+  }
   const sent = await sendTelegram(keys, html);
   if (!sent.ok) appendProgress(paths, `notify · ${notice.event} not sent: ${sent.detail}`);
 }

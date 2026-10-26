@@ -4,7 +4,9 @@ import { type Server, createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
-import { readDotEnv, telegramKeys } from './notify.ts';
+import { loadConfig } from './config.ts';
+import { notify, readDotEnv, telegramKeys } from './notify.ts';
+import { tracePaths } from './paths.ts';
 import { runUnit } from './runner.ts';
 import { supervise } from './supervise.ts';
 import { type Sandbox, makeSandbox, seedTask } from './testkit/sandbox.ts';
@@ -59,6 +61,8 @@ function withKeys(config: Record<string, unknown> = {}): Sandbox {
   writeFileSync(join(sandbox.project, '.env'), `TELEGRAM_BOT_TOKEN=${TOKEN}\nTELEGRAM_CHAT_ID="-100777"\n`);
   received = [];
   status = 200;
+  // Each test starts with an empty dedupe ledger: the burst cap must not carry over from the test before.
+  rmSync(join(home, 'notify-sent.json'), { force: true });
   return sandbox;
 }
 
@@ -175,4 +179,39 @@ test('notify.events narrows what is sent', async () => {
   } finally {
     sandbox.cleanup();
   }
+});
+
+test('only unique messages: a repeat is held back, a burst is capped, a deleted project sends nothing', async () => {
+  const sandbox = withKeys();
+  const config = loadConfig(sandbox.project);
+  const paths = tracePaths(sandbox.project);
+  try {
+    const down = { event: 'supervisor' as const, text: 'the agent could not run (limit) — waiting, then retrying' };
+    for (let i = 0; i < 5; i++) await notify(sandbox.project, config, paths, down);
+    assert.equal(texts().length, 1);
+    // An id or a timestamp alone does not make a message new.
+    await notify(sandbox.project, config, paths, {
+      ...down,
+      text: `${down.text} 376a3317-dc91-4923-bad7-327d60220248`,
+    });
+    await notify(sandbox.project, config, paths, {
+      ...down,
+      text: `${down.text} 9f1e2d3c-0000-4923-bad7-327d60220248`,
+    });
+    assert.equal(texts().length, 2);
+    for (let i = 0; i < 10; i++)
+      await notify(sandbox.project, config, paths, { event: 'supervisor', text: `distinct ${i}` });
+    assert.equal(texts().length, 6, 'the burst cap holds the chat at 6 a minute');
+    assert.match(readFileSync(paths.progress, 'utf8'), /notify · supervisor held back: same message sent 0 min ago/);
+    assert.match(readFileSync(paths.progress, 'utf8'), /held back: burst cap/);
+  } finally {
+    sandbox.cleanup();
+  }
+  received = [];
+  rmSync(join(home, 'notify-sent.json'), { force: true });
+  await notify(sandbox.project, config, paths, {
+    event: 'supervisor',
+    text: 'after cleanup',
+  });
+  assert.equal(texts().length, 0, 'a project folder that is gone never notifies');
 });

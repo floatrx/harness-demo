@@ -131,6 +131,17 @@ test('prototype review: an empty comment is 400, a comment sends it back, accept
   assert.deepEqual(await accepted.json(), { id: 'T-005', status: 'ready', prototype: null });
 });
 
+test('plan revise: an empty comment is 400, a comment returns the plan to the planner with the note', async () => {
+  seedTask(sandbox, { id: 'T-006', status: 'planned', kind: 'logic', scope: ['src/**'], closes: ['true'] });
+  const path = sandbox.taskPath('T-006');
+  assert.equal((await handleTaskAction(post({ text: '' }), projectId, 'T-006', 'revise')).status, 400);
+  const response = await handleTaskAction(post({ text: 'invert criterion 2' }), projectId, 'T-006', 'revise');
+  assert.equal(response.status, 200);
+  assert.equal(loadTask(path).fields.status, 'plan');
+  assert.match(getSection(loadTask(path).doc, 'Plan') ?? '', /### Review\n- .* · 👤 revise: invert criterion 2\n$/);
+  assert.equal((await handleTaskAction(post({ text: 'again' }), projectId, 'T-006', 'revise')).status, 409);
+});
+
 test('create makes the next draft; a missing title is 400', async () => {
   assert.equal((await handleCreateTask(post({ title: '' }), projectId)).status, 400);
   assert.equal((await handleCreateTask(post({ title: 'X', kind: 'weird' }), projectId)).status, 400);

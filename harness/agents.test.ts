@@ -155,6 +155,8 @@ test('the prompt carries the stage prompt, the rules, the specialists, memory an
   );
   assert.match(prompt, /Required verdict line: `qa: PASS\|FAIL\|CANNOT_VERIFY`/);
   assert.match(prompt, /Bounces so far: 1 of 2/);
+  // The qa coordinator owns no task-file section; the line says so (the planner's lists its three).
+  assert.match(prompt, /sections you may write: none/);
   assert.ok(prompt.includes(standingRules()));
 });
 

@@ -88,3 +88,44 @@ export function readUsage(output: string): UnitUsage | null {
     ),
   };
 }
+
+/** The wall clock of `at` in an IANA zone, as UTC milliseconds — so wall − at is the zone's offset then. */
+function wallClock(at: Date, zone: string): { ms: number; year: number; month: number; day: number } {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: zone,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).formatToParts(at);
+  const get = (type: string) => Number(parts.find((part) => part.type === type)?.value ?? 0);
+  const [year, month, day] = [get('year'), get('month'), get('day')];
+  return { ms: Date.UTC(year, month - 1, day, get('hour'), get('minute'), get('second')), year, month, day };
+}
+
+/**
+ * When a usage limit lifts, from Claude Code's message: "You've hit your session limit · resets 9:10pm
+ * (Europe/Kiev)". Null when the text names no time of day or the zone is unknown — the supervisor then naps as
+ * configured. Pilot lesson 9: it napped 30 min blind, twice, while the message said exactly when to come back.
+ */
+export function limitResetAt(text: string, now = new Date()): Date | null {
+  const match = /resets\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)\s*\(([^)]+)\)/i.exec(text);
+  if (!match) return null;
+  const clock = Number(match[1]);
+  const minute = Number(match[2] ?? 0);
+  if (clock < 1 || clock > 12 || minute > 59) return null;
+  const hour = (clock % 12) + ((match[3] as string).toLowerCase() === 'pm' ? 12 : 0);
+  let wall: ReturnType<typeof wallClock>;
+  try {
+    wall = wallClock(now, (match[4] as string).trim());
+  } catch {
+    return null;
+  }
+  const offset = Math.round((wall.ms - now.getTime()) / 60_000) * 60_000;
+  let at = Date.UTC(wall.year, wall.month - 1, wall.day, hour, minute) - offset;
+  if (at <= now.getTime()) at += 86_400_000;
+  return new Date(at);
+}

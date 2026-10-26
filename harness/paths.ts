@@ -1,6 +1,7 @@
 // Where loop state lives. Everything under `trace/` is local (gitignored) and safe to delete between runs.
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import type { UnitUsage } from './contracts/trace.ts';
 import { join } from 'node:path';
 
 export function tracePaths(project: string) {
@@ -18,6 +19,8 @@ export function tracePaths(project: string) {
     running: join(dir, 'running.json'),
     progress: join(dir, 'progress.log'),
     handoffs: join(dir, 'handoffs.jsonl'),
+    /** One line per task file a human wrote (CLI or dashboard): path + sha256 of the content written. */
+    humanWrites: join(dir, 'human-writes.jsonl'),
     unitSeq: join(dir, 'unit-seq'),
     unit: (n: number) => join(dir, `unit-${String(n).padStart(4, '0')}.jsonl`),
     /** The `claude --agents` JSON a unit received. */
@@ -79,7 +82,26 @@ export interface HandoffRecord {
   reason?: string;
   commit?: string | null;
   pr?: string;
+  /** Set by the runner from P5.4 on; older units fall back to the first stamp of their trace. */
+  startedAt?: string;
+  /** An advance step: what moved the task. */
+  action?: string;
+  /** From the unit's stream-json result (readUsage); null when the agent printed none. */
+  usage?: Partial<UnitUsage> | null;
 }
+
+/* A refused command can carry a token or a URL (`Bash(curl -H "Authorization: …")`). Every reader gets the tool name
+   only — the dashboard sends these over SSE to the browser, and `harness stats` prints them. */
+const withoutCommands = (record: HandoffRecord): HandoffRecord =>
+  record.usage?.permissionDenials
+    ? {
+        ...record,
+        usage: {
+          ...record.usage,
+          permissionDenials: record.usage.permissionDenials.map((denial) => denial.split('(')[0]?.trim() || '?'),
+        },
+      }
+    : record;
 
 export function readHandoffs(paths: TracePaths): HandoffRecord[] {
   if (!existsSync(paths.handoffs)) return [];
@@ -88,7 +110,7 @@ export function readHandoffs(paths: TracePaths): HandoffRecord[] {
     .filter(Boolean)
     .flatMap((line) => {
       try {
-        return [JSON.parse(line) as HandoffRecord];
+        return [withoutCommands(JSON.parse(line) as HandoffRecord)];
       } catch {
         return [];
       }

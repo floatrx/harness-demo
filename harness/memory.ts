@@ -6,11 +6,27 @@ import { existsSync, readFileSync } from 'node:fs';
 import type { UnitStage } from './config.ts';
 import { branchExists, tryGit } from './git.ts';
 import { type HandoffRecord, type TracePaths, readHandoffs } from './paths.ts';
-import type { TaskFields } from './task/task.ts';
+import { type TaskFields, listTaskFiles, loadTask } from './task/task.ts';
 
 const JOURNAL_LINES = 30;
 const HANDOFFS = 5;
 const LOG_LINES = 8;
+const BOARD_TASKS = 30;
+
+/** The other tasks on the board, for the stages that decide what a task is (pilot lesson 6: a vague draft's
+ *  recommended option was exactly what another open task already did). */
+function otherTasks(paths: TracePaths, id: string): string[] {
+  return listTaskFiles(paths.tasks)
+    .flatMap((file) => {
+      try {
+        const { fields } = loadTask(file);
+        return fields.id === id ? [] : [`- ${fields.id} · ${fields.status} · ${fields.title}`];
+      } catch {
+        return [];
+      }
+    })
+    .slice(-BOARD_TASKS);
+}
 
 function handoffsFor(paths: TracePaths, id: string): HandoffRecord[] {
   return readHandoffs(paths)
@@ -50,6 +66,7 @@ export function buildMemory(
     const stat = tryGit(project, ['diff', '--shortstat', `${baseBranch}...${task.branch}`]).stdout.trim();
     if (stat) facts.push(`- ${task.branch} vs ${baseBranch}: ${stat}`);
   }
+  const board = stage === 'spec' || stage === 'plan' ? otherTasks(paths, task.id) : [];
   const log = taskLogTail(`${paths.tasks}/${task.id}.md`);
   const journal = existsSync(paths.journal)
     ? readFileSync(paths.journal, 'utf8').trimEnd().split('\n').slice(-JOURNAL_LINES).join('\n')
@@ -58,6 +75,7 @@ export function buildMemory(
     '## Memory',
     '### Measured facts',
     facts.join('\n'),
+    board.length ? `### Other tasks on the board (id · status · title)\n${board.join('\n')}` : '',
     log.length ? `### Task log (last ${log.length} lines)\n${log.join('\n')}` : '',
     journal ? `### Journal (last ${JOURNAL_LINES} lines of .harness/JOURNAL.md)\n${journal}` : '',
   ]

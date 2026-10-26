@@ -1,6 +1,6 @@
 // Structural checks over a task. The runner refuses to act on a task with errors.
 
-import { type TaskDoc, getField, getSection, openQuestions, parseCriteria } from './parse.ts';
+import { type TaskDoc, getField, getSection, openQuestions, parseCriteria, unreadCriteria } from './parse.ts';
 import { KINDS, PROTOTYPE_STATES, RESUMABLE, SCOPED, isStatus } from './transitions.ts';
 
 export interface Issue {
@@ -60,6 +60,8 @@ export function validateTask(doc: TaskDoc): Issue[] {
   }
 
   const criteria = parseCriteria(getSection(doc, 'Acceptance criteria'));
+  for (const line of unreadCriteria(getSection(doc, 'Acceptance criteria')))
+    add('Acceptance criteria', `not read as a criterion, number it \`N.\`: ${line.slice(0, 60)}`);
   for (const criterion of criteria) {
     if (criterion.tag === 'closes' && !criterion.command)
       add('Acceptance criteria', `criterion ${criterion.n} is [closes] without a \`command\``);

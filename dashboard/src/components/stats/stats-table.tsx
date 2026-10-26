@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { cn } from '@/lib/cn';
 import { clockDuration, tokens, usd } from '@/lib/format';
-import type { StatRow } from '@/lib/stats';
+import type { StatRow } from '@harness/core/stats';
 import { ShareBar } from './share-bar';
 
 interface Props<T extends StatRow> {
@@ -32,7 +32,9 @@ export const StatsTable = <T extends StatRow>({ caption, head, rows, lead, testI
             <th className="w-16 px-2 py-2 text-right font-medium">Parked</th>
             <th className="w-16 px-2 py-2 text-right font-medium">Time</th>
             <th className="w-20 px-2 py-2 text-right font-medium">Tokens</th>
-            <th className="w-20 px-2 py-2 text-right font-medium">Cost</th>
+            <th className="w-20 px-2 py-2 text-right font-medium" title="API-equivalent price reported by claude -p">
+              Cost*
+            </th>
             <th className="w-[24%] px-4 py-2 font-medium" aria-label="share" />
           </tr>
         </thead>

@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { computeStats } from './stats.ts';
-import type { UnitRecord } from './units.ts';
+import { supervise } from './supervise.ts';
+import { type UnitRecord, computeStats, projectStats } from './stats.ts';
+import { makeSandbox, seedTask } from './testkit/sandbox.ts';
 
 const SECRET = 'sk-live-THIS-MUST-NOT-LEAK';
 let n = 0;
@@ -92,4 +93,22 @@ test('permission denials keep the tool name only — never the refused command',
   const json = JSON.stringify(stats);
   assert.ok(!json.includes(SECRET));
   assert.ok(!json.includes('rm -rf'));
+});
+
+test('projectStats: the units a real loop ran, by stage and by task, with the task titles', async () => {
+  const sandbox = makeSandbox({ autonomy: { mode: 'full' } });
+  try {
+    seedTask(sandbox, { status: 'ready', scope: ['src/**'], closes: ['test -f src/feature.txt'] });
+    await supervise(sandbox.project, { ...sandbox.agent, onceThrough: true });
+    const stats = projectStats(sandbox.project);
+    assert.equal(stats.total.units, 3);
+    assert.deepEqual(
+      stats.byStage.filter((row) => row.units).map((row) => row.key),
+      ['implement', 'qa', 'judge'],
+    );
+    assert.equal(stats.byTask[0]?.title, 'Add the feature file');
+    assert.equal(stats.byTask[0]?.status, 'done');
+  } finally {
+    sandbox.cleanup();
+  }
 });

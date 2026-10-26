@@ -1,8 +1,9 @@
 // Typed view over a TaskDoc plus file I/O. Writes are atomic (temp file + rename).
 
-import { randomBytes } from 'node:crypto';
-import { readFileSync, readdirSync, renameSync, writeFileSync, existsSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { createHash, randomBytes } from 'node:crypto';
+import { appendFileSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync, existsSync } from 'node:fs';
+import { basename, dirname, join, relative } from 'node:path';
+import { tracePaths } from '../paths.ts';
 import { type TaskDoc, getField, openQuestions, parseTask, serializeTask } from './parse.ts';
 import {
   type Kind,
@@ -75,6 +76,41 @@ export function atomicWrite(path: string, text: string): void {
 
 export function saveTask(path: string, doc: TaskDoc): void {
   atomicWrite(path, serializeTask(doc));
+}
+
+const sha256 = (content: string | Buffer) => createHash('sha256').update(content).digest('hex');
+
+/**
+ * A human write (CLI or dashboard) to `<project>/.harness/tasks/T-NNN.md`. The ledger line goes first, so a unit
+ * that ends between the two writes never sees the file without its line. A unit running on another task meanwhile
+ * is then not blamed for this file, and its quarantine does not undo it (pilot lesson 7).
+ */
+export function saveHumanTask(path: string, doc: TaskDoc): void {
+  const text = serializeTask(doc);
+  const project = dirname(dirname(dirname(path)));
+  const ledger = tracePaths(project).humanWrites;
+  mkdirSync(dirname(ledger), { recursive: true });
+  const line = { path: relative(project, path), sha256: sha256(text), at: new Date().toISOString() };
+  appendFileSync(ledger, `${JSON.stringify(line)}\n`);
+  atomicWrite(path, text);
+}
+
+/** True when `content` at `rel` (a task file) is exactly what a human wrote there, per the ledger. */
+export function isHumanWrite(project: string, rel: string, content: Buffer | undefined): boolean {
+  if (!content || !/^\.harness\/tasks\/T-\d{3,}\.md$/.test(rel)) return false;
+  const ledger = tracePaths(project).humanWrites;
+  if (!existsSync(ledger)) return false;
+  const hash = sha256(content);
+  return readFileSync(ledger, 'utf8')
+    .split('\n')
+    .some((line) => {
+      try {
+        const entry = JSON.parse(line) as { path?: string; sha256?: string };
+        return entry.path === rel && entry.sha256 === hash;
+      } catch {
+        return false;
+      }
+    });
 }
 
 export const TASK_FILE = /^T-\d{3,}\.md$/;

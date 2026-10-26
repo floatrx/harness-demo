@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { cn } from '@/lib/cn';
 import { clockDuration, usd } from '@/lib/format';
-import { EXIT_LABEL, type UnitRecord } from '@/lib/units';
+import { EXIT_LABEL, type UnitRecord } from '@harness/core/stats';
 import { ClaudeSpinner } from '@/components/ui/claude-spinner';
 
 interface Props {

@@ -51,5 +51,8 @@ one is stopped, its work is moved to a git stash, and the task is parked.
    process you started, by its PID. Never stop a server you did not start.
 9. **Never delete a path built from a variable.** Use a literal path.
 10. **No secrets in files or output.** Do not print or write tokens, keys or `.env` values.
+11. **Run one plain command per Bash call.** The permission mode refuses `$?`, `$(…)`, shell variables and any
+    command outside the allowlist. The Bash result already reports a non-zero exit code. Write evidence with the
+    Write tool; the task's artifacts folder exists already.
 
 <!-- standing-rules:end -->

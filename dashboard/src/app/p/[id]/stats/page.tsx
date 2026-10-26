@@ -1,11 +1,8 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { tracePaths } from '@harness/core/paths';
-import { listTaskFiles, loadTask } from '@harness/core/task/task';
 import { ProjectNotFound, findProject } from '@/lib/board';
 import { clockDuration, tokens, usd } from '@/lib/format';
-import { computeStats } from '@/lib/stats';
-import { listUnits } from '@/lib/units';
+import { projectStats } from '@harness/core/stats';
 import { PageHeader } from '@/components/shell/page-header';
 import { StatTile } from '@/components/stats/stat-tile';
 import { StatsTable } from '@/components/stats/stats-table';
@@ -26,11 +23,7 @@ export default async function StatsPage({ params }: Props) {
     if (error instanceof ProjectNotFound) notFound();
     throw error;
   }
-  const tasks = listTaskFiles(tracePaths(project.path).tasks).map((file) => loadTask(file).fields);
-  const stats = computeStats(
-    listUnits(project.path),
-    tasks.map((task) => ({ id: task.id, title: task.title, status: task.status })),
-  );
+  const stats = projectStats(project.path);
   const { total } = stats;
   const unreported = total.units - total.reported;
   return (
@@ -38,7 +31,7 @@ export default async function StatsPage({ params }: Props) {
       <PageHeader
         project={project}
         title="Stats"
-        lead="Where the time and the money went, per stage and per task — from the usage each unit reported."
+        lead="Where the time and the usage went, per stage and per task — from what each unit reported. Cost is the API-equivalent price claude -p reports; a subscription is not billed per token."
       />
       {total.units === 0 ? (
         <p className="text-sm text-muted" data-testid="stats-empty">
@@ -53,7 +46,7 @@ export default async function StatsPage({ params }: Props) {
               sub={`${total.ok} passed · ${total.stops} parked by a contract`}
             />
             <StatTile
-              label="Cost"
+              label="API-equivalent cost"
               value={total.costUsd == null ? '—' : usd(total.costUsd)}
               sub={
                 total.reported

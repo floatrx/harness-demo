@@ -6,7 +6,7 @@
 //   3 nothing left to take · 4 the agent could not run (usage limit, network, login, probe)
 
 import { spawn } from 'node:child_process';
-import { createWriteStream, existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { createWriteStream, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -17,10 +17,10 @@ import {
   loadConfig,
   transitionContext,
 } from './config.ts';
-import { runClosing } from './contracts/closing.ts';
+import { runClosing, uncallableCommands } from './contracts/closing.ts';
 import { runGate } from './contracts/gate.ts';
 import { judgeScope, outsideHarness, quarantine, snapshot } from './contracts/scope.ts';
-import { readUsage, readVerdict } from './contracts/trace.ts';
+import { limitResetAt, readUsage, readVerdict, resultEvent } from './contracts/trace.ts';
 import {
   type AgentDef,
   agentsForStage,
@@ -33,7 +33,7 @@ import {
 import { buildMemory } from './memory.ts';
 import { deliverTask } from './deliver.ts';
 import { noticeFor, notify } from './notify.ts';
-import { branchExists, currentBranch, dirty, git, head, sh } from './git.ts';
+import { branchExists, commitsBetween, currentBranch, dirty, git, head, sh } from './git.ts';
 import {
   type TracePaths,
   appendHandoff,
@@ -56,7 +56,7 @@ import {
 } from './task/task.ts';
 import { type Status, findTransition } from './task/transitions.ts';
 import { validateTask } from './task/validate.ts';
-import { appendLog, moveTo, taskWriteViolations } from './task/write.ts';
+import { SECTION_OWNERS, appendLog, moveTo, taskWriteViolations } from './task/write.ts';
 
 export const EXIT = { done: 0, hardStop: 1, config: 2, idle: 3, agentDown: 4 } as const;
 export type ExitCode = (typeof EXIT)[keyof typeof EXIT];
@@ -72,6 +72,8 @@ export interface UnitResult {
   commit?: string;
   /** A status changed or a commit landed: the supervisor's progress measure. */
   moved: boolean;
+  /** Agent down with a known end: when the usage limit lifts (epoch ms). The supervisor naps until then. */
+  retryAt?: number;
 }
 
 export interface RunOptions {
@@ -89,7 +91,7 @@ const PROMPTS = join(HERE, 'prompts');
 
 /** Output that means "the agent could not run", not "the agent did bad work". */
 const AGENT_DOWN =
-  /usage limit|rate[ -]limit|\b429\b|overloaded|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|not logged in|\/login/i;
+  /usage limit|session limit|weekly limit|rate[ -]limit|\b429\b|overloaded|ENOTFOUND|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|not logged in|\/login/i;
 
 /** How the agent is started: the built-in `claude` argv (no shell), or an override command through `sh -c`. */
 export interface Invocation {
@@ -128,6 +130,25 @@ export function invocation(
     ...config.agent.allowedTools,
   ];
   return { file: 'claude', args, display: `claude ${args.slice(0, 12).join(' ')} --allowedTools …` };
+}
+
+/**
+ * Who pays for the units: a stand-in (AGENT_CMD / agent.command, no tokens), an API key (`claude -p` bills it per
+ * token), or the subscription login (usage limits; the cost figures are API-equivalent, not a bill). No value is read
+ * beyond "is it set".
+ */
+export function billing(
+  config: HarnessConfig,
+  options: Pick<RunOptions, 'agentCommand'> = {},
+): { mode: 'stand-in' | 'api-key' | 'subscription'; note: string } {
+  if (options.agentCommand ?? process.env.AGENT_CMD ?? config.agent.command)
+    return { mode: 'stand-in', note: 'a stand-in replaces claude — no tokens' };
+  if (process.env.ANTHROPIC_API_KEY?.trim())
+    return { mode: 'api-key', note: 'ANTHROPIC_API_KEY is set — claude -p bills the API per token' };
+  return {
+    mode: 'subscription',
+    note: 'subscription login — usage limits, not a per-token bill; costs shown are API-equivalent',
+  };
 }
 
 /** The stage's specialists; under merged review the qa unit also gets the judge. */
@@ -214,7 +235,12 @@ async function runStep(project: string, options: RunOptions): Promise<UnitResult
   for (const file of listTaskFiles(paths.tasks)) {
     try {
       const task = loadTask(file);
-      const issues = validateTask(task.doc);
+      // A spec or plan unit rewrites the criteria and the scope, and the plan contract checks them after it: issues
+      // there must not keep that unit from running, or a plan sent back to fix them deadlocks (pilot lesson 8).
+      const writes = task.fields.status === 'spec' || task.fields.status === 'plan';
+      const issues = validateTask(task.doc).filter(
+        (issue) => !(writes && (issue.field === 'Acceptance criteria' || issue.field === 'scope')),
+      );
       if (issues.length) {
         skip.add(task.fields.id);
         say(`skip ${task.fields.id}: ${issues.map((issue) => issue.message).join('; ')}`);
@@ -374,6 +400,8 @@ async function agentUnit(
   const model = config.roles.models[role] ?? 'sonnet';
   const how = invocation(config, model, agentsFile, options);
   const memory = buildMemory(project, paths, task.fields, stage, config.baseBranch);
+  // The folder exists before the agent starts: `mkdir` is not on the allowlist (pilot lesson 3).
+  mkdirSync(join(project, artifacts), { recursive: true });
 
   let run: AgentRun;
   try {
@@ -418,10 +446,14 @@ async function agentUnit(
   if (run.spawnError || (run.code !== 0 && AGENT_DOWN.test(run.output))) {
     const note = quarantine(project, before, `${id} unit ${unit}`, [], []);
     writeFileSync(task.path, beforeText);
-    const message = `agent could not run: ${run.spawnError ?? lastLine(run.output)}`;
+    // The result text says why ("You've hit your session limit · resets 9:10pm (…)"); the last stream-json line
+    // is often a bare session_state_changed event (pilot lesson 9).
+    const why = run.spawnError ?? (resultEvent(run.output)?.result || lastLine(run.output));
+    const message = `agent could not run: ${why.replace(/\s+/g, ' ').slice(0, 200)}`;
+    const retryAt = limitResetAt(why)?.getTime();
     say(`unit ${unit} · ${id} · exit 4 · ${message}${note ? ` · ${note}` : ''}`);
     appendHandoff(paths, { ...base, to: status, exit: EXIT.agentDown, reason: message });
-    return { ...base, exit: EXIT.agentDown, message, to: status, moved: false };
+    return { ...base, exit: EXIT.agentDown, message, to: status, moved: false, ...(retryAt ? { retryAt } : {}) };
   }
 
   // -- contracts that do not depend on the stage.
@@ -502,6 +534,7 @@ async function agentUnit(
       if (fields.scope.length === 0) problems.push('plan contract: no scope');
       if (!criteria.some((criterion) => criterion.tag === 'closes' && criterion.command))
         problems.push('plan contract: no [closes] criterion with a command');
+      problems.push(...uncallableCommands(project, criteria).map((problem) => `plan contract: ${problem}`));
       const issues = validateTask(doc).filter(
         (issue) => issue.field === 'scope' || issue.field === 'Acceptance criteria',
       );
@@ -520,7 +553,16 @@ async function agentUnit(
       break;
     }
     case 'implement': {
-      if (scope.changed.length === 0) return park(['implement: no change inside scope'], true);
+      if (scope.changed.length === 0) {
+        // A later round may find nothing to fix in the code (a wrong reject, a broken check): when the branch already
+        // holds this task's commits, qa and the judge decide again. A round with no work on the branch is barren.
+        // Not `bounces`: Reopen resets it, and the pilot's reopened round was parked here (lesson 4).
+        if (commitsBetween(project, config.baseBranch, 'HEAD').length === 0)
+          return park(['implement: no change inside scope'], true);
+        appendLog(doc, '  ↳ no change this round — the implementer found nothing to fix; the branch already holds the work');
+        target = 'qa';
+        break;
+      }
       const gate = runGate(project, task.fields.gate ?? config.gate, before.head);
       if (!gate.ok)
         return park(
@@ -610,6 +652,18 @@ export interface PromptInput {
 }
 
 /** Stage prompt + standing rules + the specialists this stage may dispatch + memory + `## This run`. */
+/**
+ * The `##` sections this role may write, from the same table the task-file contract checks (pilot lesson: a real
+ * planner wrote `## Risks` and `## Tests` and was parked — the prompt now says where such content goes).
+ */
+function ownedSections(role: string): string {
+  const owned = Object.entries(SECTION_OWNERS)
+    .filter(([, owners]) => (owners as readonly string[]).includes(role))
+    .map(([name]) => `\`## ${name}\``);
+  if (!owned.length) return '- Task-file sections you may write: none — this stage changes no section.';
+  return `- Task-file sections you may write: ${owned.join(', ')}. Put anything else (risks, tests, notes) inside them as \`###\` subsections; any other \`##\` heading stops the unit.`;
+}
+
 export function buildPrompt(input: PromptInput): string {
   const { stage, role, task, config } = input;
   const stagePath = join(PROMPTS, `${stage}.md`);
@@ -629,6 +683,7 @@ export function buildPrompt(input: PromptInput): string {
     `- Scope: ${task.scope.length ? task.scope.join(', ') : '(none yet — the plan sets it)'}`,
     `- Gate: ${task.gate ?? config.gate ?? '(none)'}`,
     `- Artifacts folder: ${input.artifacts}/`,
+    ownedSections(role),
     `- Bounces so far: ${task.bounces} of ${config.limits.bounces}`,
     stage === 'qa' && config.roles.mergeQaJudge
       ? '- Merged review: there is no judge stage. After qa, dispatch `judge` too and PASS only if it would CONFIRM.'

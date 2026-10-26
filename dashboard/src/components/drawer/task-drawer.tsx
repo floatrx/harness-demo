@@ -8,7 +8,7 @@ import { RoleAvatar } from '@/components/ui/role-avatar';
 import { StageTrack } from '@/components/board/stage-track';
 import { ClaudeSpinner } from '@/components/ui/claude-spinner';
 import { InterviewPanel } from './interview-panel';
-import { PrototypeReview } from './prototype-review';
+import { GateReview } from './gate-review';
 import { MarkdownPanel } from './markdown-panel';
 import { UnitsPanel } from './units-panel';
 
@@ -48,7 +48,12 @@ export const TaskDrawer = ({ task, projectId }: Props) => {
     {
       id: 'plan',
       label: 'Plan',
-      body: <MarkdownPanel markdown={task.sections.Plan} empty="The planner has not written the plan yet." />,
+      body: (
+        <div className="space-y-3">
+          {task.status === 'planned' && <GateReview gate="plan" projectId={projectId} taskId={task.id} />}
+          <MarkdownPanel markdown={task.sections.Plan} empty="The planner has not written the plan yet." />
+        </div>
+      ),
     },
     ...(task.kind === 'ui' || task.sections.Prototype
       ? [
@@ -58,7 +63,12 @@ export const TaskDrawer = ({ task, projectId }: Props) => {
             body: (
               <div className="space-y-3">
                 {task.status === 'prototype' && task.prototype.state === 'review' && (
-                  <PrototypeReview projectId={projectId} taskId={task.id} roundsLeft={task.prototype.roundsLeft} />
+                  <GateReview
+                    gate="prototype"
+                    projectId={projectId}
+                    taskId={task.id}
+                    roundsLeft={task.prototype.roundsLeft}
+                  />
                 )}
                 {task.status === 'prototype' && task.prototype.state === 'drafting' && (
                   <p className="flex items-center text-[13px] text-muted">

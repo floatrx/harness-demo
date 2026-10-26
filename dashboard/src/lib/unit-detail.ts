@@ -5,7 +5,7 @@ import { readRunning, tracePaths } from '@harness/core/paths';
 import { lockHolder } from '@harness/core/supervise';
 import { findProject } from './board.ts';
 import { type UnitTrace, parseUnitTrace } from './unit-trace.ts';
-import { type UnitRecord, listUnits } from './units.ts';
+import { type UnitRecord, listUnits } from '@harness/core/stats';
 
 export interface UnitDetail {
   unit: number;

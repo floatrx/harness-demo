@@ -12,9 +12,8 @@ import { FAKE_AGENT, makeSandbox, seedTask, type Sandbox } from '@harness/core/t
 import { loadAgentsPage } from './agents-view.ts';
 import { liveSnapshot } from './live.ts';
 import { loadTaskDetail } from './task-detail.ts';
-import { computeStats } from './stats.ts';
+import { computeStats, listUnits } from '@harness/core/stats';
 import { loadTracePage } from './unit-detail.ts';
-import { listUnits } from './units.ts';
 
 const SECRET = 'sk-live-THIS-MUST-NOT-LEAK';
 let sandbox: Sandbox;
