@@ -39,14 +39,17 @@ registers the project in `$HARNESS_HOME/projects.json` (default `~/.harness`).
 
 | Path | What | Versioned |
 |---|---|---|
-| `.harness/config.json` | base branch, autonomy, limits, gate, probe, delivery (defaults live in `harness/config.ts`) | yes |
+| `.harness/config.json` | base branch, autonomy, limits, gate, probe, delivery, the app (defaults live in `harness/config.ts`) | yes |
 | `.harness/tasks/T-NNN.md` | one task: YAML-subset frontmatter + `##` sections | no |
 | `.harness/JOURNAL.md` | short notes agents leave for the next unit | no |
-| `.harness/artifacts/T-NNN/` | screenshots, the prototype picture, `pr-body.md` | no |
+| `.harness/artifacts/T-NNN/` | screenshots, the prototype picture, `qa-report.md`, `pr-body.md` | no |
 | `.harness/trace/progress.log` | one line per event, timestamped | no |
 | `.harness/trace/handoffs.jsonl` | one record per unit or runner step: from → to, exit, verdict, commit, usage, PR | no |
 | `.harness/trace/unit-NNNN.jsonl` | the unit's raw stream-json, each line stamped with `harness_ts` | no |
 | `.harness/trace/unit-NNNN.agents.json` | the `--agents` JSON the unit received | no |
+| `.harness/trace/unit-NNNN.app.json`, `.app.log` | the app started for the unit (pid, port, the runner that owns it) and its output | no |
+| `.harness/trace/unit-NNNN.mcp.json` | the browser unit's MCP config (Playwright MCP only) | no |
+| `.harness/trace/human-writes.jsonl` | the sha256 of every task file a human wrote (CLI or dashboard) | no |
 | `.harness/trace/running.json` | the unit in flight (task, stage, role, pid, start) | no |
 | `.harness/trace/supervisor.lock`, `PAUSE`, `STOP` | one loop per checkout; control files read at the unit boundary | no |
 
@@ -97,14 +100,26 @@ interview, an auto-approved plan), or **deliver** (the runner pushes and opens a
 1. **Pick** the task (the queue), validate its file, refuse a dirty tree the loop did not make.
 2. **Branch.** Spec and plan run on the base branch. Implement, qa and judge run on `harness/T-NNN-<slug>`, created
    from the base branch at the first implement unit.
-3. **Snapshot** HEAD, the branch, remote refs, the dirty files and the task file.
+3. **App** — only for a stage in `app.stages` (qa and prototype by default) of a project with an `app` block: start
+   it and wait until it answers (below). **Snapshot** HEAD, the branch, remote refs, the dirty files and the task
+   file — after the app is up, so nothing the server writes at start counts as the unit's.
 4. **Spawn** `claude -p --output-format stream-json --model <role model> --permission-mode dontAsk
    --setting-sources project,local --agents <file> --allowedTools …` with the stage prompt on stdin. Commits and pushes
    are absent from the allowlist on purpose. In this mode Claude Code also refuses `$?`, `$(…)` and shell variables,
    so the standing rules ask for one plain command per Bash call, and the runner creates the artifacts folder first.
 5. **Check** the contracts (next section).
 6. **Transition** the task, **commit** on the task branch when the stage writes code (`T-NNN: <title> (round n)`),
-   append the handoff record, notify.
+   append the handoff record, notify. **Stop the app**, whatever the outcome.
+
+**The app and the browser** (`harness/app.ts`). The runner picks a free port, runs `app.start` with `{port}` filled
+in, as its own process group, and polls `http://<app.host>:<port><app.ready>` until anything answers or
+`app.timeoutSeconds` pass. The host is `localhost`: Next's dev server blocks its hot-reload socket for other origins.
+An app that exits or never answers is stopped and logged ("app did not start: …"), and the unit runs without a
+browser. When the app is up, the unit gets `HARNESS_APP_URL`, an `App:` line in its prompt, and
+`--mcp-config <unit.mcp.json> --strict-mcp-config` with Playwright MCP (`app.browser`, through `npx`, headless system
+Chrome) as the only server. After the unit the runner sends SIGTERM to the group, SIGKILL after 5 s, and checks out
+any tracked file the app rewrote while it ran. Each started app has a record in `trace/`; the next run stops a group
+whose runner died.
 
 A hard stop (a broken contract or a crashed agent) moves the unit's changes into a named git stash
 ("harness quarantine: T-NNN unit N"), restores the tree, and parks the task with the reason. A usage limit is not a
@@ -128,9 +143,16 @@ can be wrong.
 
 **Two kinds of acceptance criteria.** A `[closes]` criterion ends with a shell command that exits 0 when it holds —
 `3. [closes] The label is tested: \`pnpm test\`` (the command is the first backtick span after a colon). Code
-re-runs it, so it cannot be argued with. A `[found]` criterion needs a person at the running app (the units
-have no browser): QA and the judge check what commands and code can show, and the pull request lists every
-`[found]` criterion as the reviewer's checklist. It never parks a task on its own.
+re-runs it, so it cannot be argued with. A `[found]` criterion is checked on the running app. With an app and a
+browser, QA walks each one, saves one screenshot per criterion in the artifacts folder, and starts `qa-report.md`
+with one line per criterion: `- <n> PASS|FAIL|REVIEWER · browser|command|code · <screenshot or ->`. The pull request
+marks a criterion walked when its line reads `PASS · browser`; every other `[found]` criterion stays on the
+reviewer's checklist. Without a browser, QA and the judge check what commands and code can show, and the whole list
+is the reviewer's. A criterion left for the reviewer never parks a task on its own.
+
+**The browser's own files.** Playwright MCP saves a screenshot with a bare file name in the workspace root — the
+project. After a browser unit the runner moves new untracked images from the project root into the task's artifacts
+folder, before the scope contract runs.
 
 **Narrow every check.** A check that fails a unit for a defect the unit did not cause is the most expensive bug a
 loop can have — hence the gate's base re-run.
@@ -145,6 +167,9 @@ loop can have — hence the gate's base re-run.
 - **Standing rules** live in one file, `harness/prompts/STANDING-RULES.md`, copied into every agent between markers.
   A drifted copy refuses every run (exit 2); `harness agents --sync` rewrites the copies.
 - **The judge is never on the implementer's or the tester's model** — checked before every run.
+- **Browser tools.** A browser unit's allowlist gains `mcp__playwright`. A specialist sees only the tools its file
+  lists, so the runner adds the browser tools to every listing specialist of that unit — never to the judge. The
+  coordinator passes the app's URL in its dispatch, because a specialist reads only its dispatch prompt.
 
 ## 7. The supervisor
 
@@ -168,8 +193,9 @@ subscription login (usage limits; the cost figures are API-equivalent).
 With `deliver.pr: true` a `done` task gets one runner step — no agent, no tokens (`harness/deliver.ts`):
 
 1. the branch contract;
-2. the pull-request body, composed from the task file and the handoffs (goal, plan, each `[closes]` command, the
-   verdicts, the commits), with secrets scrubbed, written to `artifacts/T-NNN/pr-body.md`;
+2. the pull-request body, composed from the task file, the handoffs and QA's `qa-report.md` (goal, plan, each
+   `[closes]` command, the `[found]` criteria QA walked in the browser, the verdicts, the commits), with secrets
+   scrubbed, written to `artifacts/T-NNN/pr-body.md`;
 3. `git push -u <remote> <branch>`;
 4. `gh pr view <branch>` (reuse an open one) or `gh pr create`;
 5. frontmatter `pr: <url>`, `done → delivered`.
@@ -209,6 +235,9 @@ CLI reads, through the core (`@harness/core`):
   the repository on any token shape.
 - Agents run with `--permission-mode dontAsk` and an allowlist without commit or push; the scope contract catches a
   commit, a push or a fetch anyway.
+- The runner owns the app: it starts it and stops exactly the process group it started, never a server it did not
+  start. The app runs without the AI-agent markers, the agent session's keys, the caller's `NODE_ENV` or Next's
+  internals. A browser unit gets one MCP server and no other (`--strict-mcp-config`); other units get none.
 - A human may act on other tasks while a unit runs. Every human write (CLI or dashboard) records the file's sha256 in
   `.harness/trace/human-writes.jsonl`; the scope contract does not blame the unit for such a file, and a quarantine
   does not undo it. Human CLI actions refuse inside a unit (`HARNESS_LOOP`). The ledger guards against mistakes, not
@@ -219,6 +248,9 @@ CLI reads, through the core (`@harness/core`):
 - `harness/testkit/fake-agent.ts` is a scripted stand-in for `claude -p`: per stage it can write files, ask questions,
   print verdicts, stream specialist dispatches, report usage, or hit a usage limit.
 - `harness/testkit/fake-gh.ts` stands in for the GitHub CLI and records every call.
+- `harness/testkit/fake-app.ts` stands in for a dev server: it answers, starts slowly, fails, ignores SIGTERM, reports
+  the environment it got, or rewrites a file at start. The fake agent's `browse` action fetches `HARNESS_APP_URL`
+  and saves the page.
 - `makeSandbox()` gives each test a temporary git repository with a bare `origin`.
 - `harness self-test` runs every contract case on throwaway repositories; `pnpm dashboard:e2e` walks the built
   dashboard in Chrome and writes `docs/screenshots/`.

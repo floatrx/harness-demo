@@ -11,6 +11,7 @@ checks**, not by instructions the agent may ignore.
 - **Agents** — a coordinator per stage delegates to an open registry of specialists (`writer`, `explorer`, `planner`,
   `designer`, `tester`, `implementer`, `debugger`, `qa`, `judge`, and any you add).
 - **Dashboard** — a local Next.js control plane: projects, board, interview, live trace, stats, agents.
+- **Browser** — optional: the runner starts your app for QA and the designer, who look at it through Playwright MCP.
 - **Delivery** — the runner pushes the task branch and opens the pull request. Nothing ever merges it.
 - **Telegram** — optional one-way pings when the loop needs you or finishes something.
 
@@ -23,7 +24,7 @@ a live demo project with pull requests opened by the loop is
 ## Requirements
 
 Node 26 (`.nvmrc`; it runs the TypeScript in `harness/` directly), pnpm, git. For real runs: the Claude Code CLI
-(`claude`), logged in. For delivery: the GitHub CLI (`gh`), logged in.
+(`claude`), logged in. For delivery: the GitHub CLI (`gh`), logged in. For the browser: `npx` and Google Chrome.
 
 ## Quickstart
 
@@ -104,8 +105,35 @@ REJECTED send the task back, up to `limits.bounces` (2).
 
 A `done` task then gets one more step from the runner — no agent, no tokens: it checks that the task branch holds only
 its own commits, pushes it, and opens a pull request with `gh pr create`. The body carries the goal, the plan, each
-`[closes]` command, the QA and judge verdicts and the commits (the task files themselves are gitignored). Nothing
-merges it. The supervisor refuses to start with delivery on when the remote or `gh` is missing.
+`[closes]` command, the QA and judge verdicts and the commits (the task files themselves are gitignored). A `[found]`
+criterion QA walked in the browser is marked done with its screenshot's name; the rest stay a checklist for the
+reviewer. Nothing merges it. The supervisor refuses to start with delivery on when the remote or `gh` is missing.
+
+## Your app and a browser (optional)
+
+```json
+"app": { "start": "pnpm exec next dev -p {port}", "ready": "/" }
+```
+
+With an `app` block in `.harness/config.json`, the units that look at the app — qa and prototype (`app.stages`) — get
+it running and a browser to see it:
+
+- The runner picks a free port, runs `start` with `{port}` filled in, and waits until
+  `http://localhost:<port><ready>` answers (`app.timeoutSeconds`, 60). After the unit it stops exactly the process
+  group it started, whatever the unit's outcome.
+- The unit gets Playwright MCP (`app.browser`, run through `npx`, headless system Chrome) as its only MCP server. Its
+  specialists get the browser tools too; the judge never does.
+- **QA walks each `[found]` criterion in the browser**, saves one screenshot per criterion, and writes one line per
+  criterion into its report (`- 7 PASS · browser · qa-7-toast.png`). The pull request marks those criteria as walked.
+  Only a step a browser cannot do — time passing, another device, a screen reader — stays for the reviewer.
+- **The designer screenshots the real prototype route** (`prototype.png`, 1440×900) instead of drawing a wireframe.
+
+An app that does not start is logged, and the unit runs without a browser. The app runs without the AI-agent
+markers and without the caller's `NODE_ENV`: Next 16 otherwise writes `AGENTS.md` or rewrites `tsconfig.json`. A
+tracked file the app rewrites anyway is checked out again after it stops. The host is `localhost`, not `127.0.0.1`:
+Next's dev server blocks its hot-reload socket for any other origin, so the page never hydrates. The example project
+sets the block; `harness preview` on a qa or prototype task shows the browser flags and writes the MCP config a unit
+would get.
 
 ## Telegram (optional)
 
@@ -134,30 +162,31 @@ interview, a prototype, no bounce) took 7 units, 3 min 21 s of agent time and 11
 
 ## Pilot
 
-Three tasks went from a draft to an open pull request on
+Four tasks went from a draft to an open pull request on
 [harness-demo-bookmarks](https://github.com/floatrx/harness-demo-bookmarks) with real `claude -p` on a subscription
 login, the default models (sonnet coordinators, an opus judge, a haiku explorer), gated autonomy and delivery on.
 Claude passed the human gates on the recommended options — except where an option was wrong, noted below. Nothing was
-merged.
+merged. T-005 ran after the browser landed.
 
 | Task | Kind | What happened | Units | Agent time | Tokens | API-equiv. | PR |
 |---|---|---|---:|---:|---:|---:|---|
 | T-004 Show when a bookmark was added | logic | plan sent back once (`revise`); three harness bugs parked it on the way, each fixed in code | 13 | 6:51 | 25.0k | $2.30 | [#2](https://github.com/floatrx/harness-demo-bookmarks/pull/2) |
 | T-001 Search box that filters the list | ui | 2-question interview, prototype accepted on round 1, no bounce | 7 | 3:21 | 11.1k | $1.68 | [#3](https://github.com/floatrx/harness-demo-bookmarks/pull/3) |
 | T-003 Make the bookmarks better | vague | 4-question interview (Q1's recommended option duplicated T-001, so answered otherwise); plan sent back once; **the judge rejected round 1** — the count sat outside the header and showed seed data on first paint — round 2 fixed both; two units hit the session limit | 14 | 7:48 | 18.7k | $2.86 | [#4](https://github.com/floatrx/harness-demo-bookmarks/pull/4) |
+| T-005 Undo after removing a bookmark | ui | 1-question interview; plan sent back once (it leaned on T-001 and T-004, not on main yet); the designer screenshotted the real toast, accepted on round 1; **QA walked all 7 `[found]` criteria in the browser**, a screenshot each | 8 | 6:46 | 17.4k | $2.30 | [#5](https://github.com/floatrx/harness-demo-bookmarks/pull/5) |
 
 T-002 ([#1](https://github.com/floatrx/harness-demo-bookmarks/pull/1)) was delivered by the stand-in agent, for zero
-tokens. Per stage, from `harness stats --project bookmarks` (39 units, 5 of them the stand-in's):
+tokens. Per stage, from `harness stats --project bookmarks` (47 units, 5 of them the stand-in's):
 
 | Stage | Units | Parked | Agent time | Tokens | API-equiv. |
 |---|---:|---:|---:|---:|---:|
-| spec | 8 | 1 | 3:30 | 8.9k | $1.25 |
-| plan | 7 | 1 | 4:07 | 15.9k | $1.45 |
-| prototype | 1 | 0 | 0:44 | 4.2k | $0.33 |
-| implement | 8 | 2 | 3:08 | 16.0k | $1.49 |
-| qa | 7 | 1 | 2:11 | 3.6k | $0.83 |
-| judge | 8 | 0 | 4:22 | 6.2k | $1.49 |
-| **total** | **39** | **5** | **18:03** | **54.7k** | **$6.83** |
+| spec | 10 | 1 | 3:34 | 9.3k | $1.77 |
+| plan | 9 | 1 | 6:35 | 26.4k | $2.12 |
+| prototype | 2 | 0 | 2:27 | 5.3k | $0.69 |
+| implement | 9 | 2 | 3:24 | 17.1k | $1.58 |
+| qa | 8 | 1 | 3:46 | 6.8k | $1.19 |
+| judge | 9 | 0 | 5:04 | 7.2k | $1.79 |
+| **total** | **47** | **5** | **24:49** | **72.1k** | **$9.13** |
 
 Tokens are input + output; prompt-cache reads come on top (about 2.2M for T-004 alone) and are much cheaper.
 
@@ -165,8 +194,8 @@ Tokens are input + output; prompt-cache reads come on top (about 2.2M for T-004 
 
 1. A unit is told which task-file sections it may write; the planner had invented `## Risks`.
 2. `revise` sends a plan back with a comment; `planned` used to have one way out, Approve.
-3. QA cannot walk a running app (no browser): `[found]` criteria go to the reviewer's checklist in the PR, and the
-   allowlist gained read-only `grep`, `cat`, `head`, `tail`, `wc`.
+3. QA had no browser then: `[found]` criteria went to the reviewer's checklist in the PR, and the allowlist gained
+   read-only `grep`, `cat`, `head`, `tail`, `wc`. The `app` block now gives it one.
 4. A `[closes]` command is the backtick span after the colon — the loop once ran `formatRelativeTime` as a command
    and overruled a correct verdict. The plan contract now checks every command is callable.
 5. The designer draws a faithful SVG wireframe when nothing can take a screenshot.
@@ -174,6 +203,14 @@ Tokens are input + output; prompt-cache reads come on top (about 2.2M for T-004 
 7. A human action on another task while a unit runs is neither blamed on the unit nor undone by its quarantine.
 8. Criteria are numbered `N.` — `1a.` was silently skipped by the closing contract.
 9. A usage limit that names its reset time is waited out exactly; Telegram sends only unique messages.
+10. Agents run git from the folder they start in and change files with Write or Edit: the allowlist matches a
+    command's start, so `git -C … diff` and `tee` were refused.
+11. The board in a unit's memory says whether each task is merged into main — T-005's first plan built on two
+    delivered tasks whose pull requests were still open.
+12. The app is opened on `localhost`: on `127.0.0.1` Next's dev server blocks hot reload and the page never hydrates.
+13. The pull request marks the `[found]` criteria QA walked in the browser. #5 was opened before this fix and still
+    lists all seven for the reviewer.
+14. A coordinator waits for its specialist with `sleep 20`; a shell `until` loop was refused.
 
 Each run's units are on the demo project's dashboard (`/live`, `/stats`); the contracts they exercised are in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
@@ -181,7 +218,7 @@ Each run's units are on the demo project's dashboard (`/live`, `/stats`); the co
 ## Layout
 
 ```
-harness/      the core: CLI, runner, supervisor, queue, contracts, agents, memory, delivery, notify, stats
+harness/      the core: CLI, runner, supervisor, queue, contracts, agents, memory, app, delivery, notify, stats
 agents/       the base specialist registry (one .md per role)
 dashboard/    the local control plane (Next.js) and its browser walkthrough
 examples/app/ the example project template

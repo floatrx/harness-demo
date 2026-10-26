@@ -86,7 +86,7 @@ const lastLine = (file: string) =>
   existsSync(file) ? (readFileSync(file, 'utf8').trimEnd().split('\n').at(-1) ?? '').slice(0, 200) : '';
 
 /**
- * Starts `app.start` with `{port}` filled in, in its own process group, and waits until `http://127.0.0.1:<port><ready>`
+ * Starts `app.start` with `{port}` filled in, in its own process group, and waits until `http://<host>:<port><ready>`
  * answers anything. Not ready in time, or exited first: the group is stopped and the reason returned.
  */
 export async function startApp(
