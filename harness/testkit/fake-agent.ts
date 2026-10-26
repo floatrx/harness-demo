@@ -73,6 +73,8 @@ const role = env('HARNESS_ROLE');
 const taskId = env('HARNESS_TASK_ID');
 const taskFile = env('HARNESS_TASK_FILE');
 const project = env('HARNESS_PROJECT');
+/* Where the unit runs and writes code: the task's worktree for code units, the main checkout for spec and plan. */
+const tree = process.cwd();
 const artifacts = env('HARNESS_ARTIFACTS');
 const scenarioPath = process.env.HARNESS_FAKE_SCENARIO;
 const scenario: Scenario = scenarioPath ? (JSON.parse(readFileSync(scenarioPath, 'utf8')) as Scenario) : {};
@@ -143,7 +145,7 @@ function defaultStep(): void {
       });
       break;
     case 'implement': {
-      const path = join(project, defaults.file);
+      const path = join(tree, defaults.file);
       mkdirSync(dirname(path), { recursive: true });
       appendFileSync(path, `${taskId} implemented at ${new Date().toISOString()}\n`);
       break;
@@ -161,11 +163,11 @@ async function play(actions: Action[]): Promise<void> {
   for (const action of actions) {
     if ('default' in action) defaultStep();
     else if ('write' in action) {
-      mkdirSync(dirname(join(project, action.write)), { recursive: true });
-      writeFileSync(join(project, action.write), action.content);
+      mkdirSync(dirname(join(tree, action.write)), { recursive: true });
+      writeFileSync(join(tree, action.write), action.content);
     } else if ('append' in action) {
-      mkdirSync(dirname(join(project, action.append)), { recursive: true });
-      appendFileSync(join(project, action.append), action.content);
+      mkdirSync(dirname(join(tree, action.append)), { recursive: true });
+      appendFileSync(join(tree, action.append), action.content);
     } else if ('section' in action) editTask((doc) => putSection(doc, action.section, normalizeBody(action.content)));
     else if ('field' in action) editTask((doc) => setField(doc, action.field, action.value));
     else if ('question' in action)
@@ -180,7 +182,7 @@ async function play(actions: Action[]): Promise<void> {
         );
       });
     else if ('say' in action) console.log(action.say);
-    else if ('exec' in action) execSync(action.exec, { cwd: project, stdio: 'ignore' });
+    else if ('exec' in action) execSync(action.exec, { cwd: tree, stdio: 'ignore' });
     else if ('sleep' in action) await new Promise((resolve) => setTimeout(resolve, action.sleep));
     else if ('exit' in action) process.exit(action.exit);
     else if ('stream' in action) {
@@ -231,7 +233,7 @@ async function play(actions: Action[]): Promise<void> {
                 type: 'tool_use',
                 id,
                 name: call.tool,
-                input: call.file ? { file_path: join(project, call.file) } : {},
+                input: call.file ? { file_path: join(tree, call.file) } : {},
               },
             ],
           },

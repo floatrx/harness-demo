@@ -9,14 +9,15 @@ import { listProjects } from './projects.ts';
 import { validateTask } from './task/validate.ts';
 import { baseAgentsDir } from './agents.ts';
 import { join } from 'node:path';
-import { dirty } from './git.ts';
+import { currentBranch, dirty, git } from './git.ts';
+import { worktreePath } from './worktree.ts';
 import { type UnitResult, runUnit } from './runner.ts';
 import { portBusy } from './app.ts';
 import { supervise } from './supervise.ts';
 import { type Sandbox, makeSandbox, readLog, seedTask } from './testkit/sandbox.ts';
 import { accept, addReview, answerQuestion, approve, comment, reopen, stamp, submit } from './task/write.ts';
 import { listTaskFiles, loadTask, saveTask } from './task/task.ts';
-import { getSection } from './task/parse.ts';
+import { getSection, setField } from './task/parse.ts';
 
 export interface Case {
   name: string;
@@ -77,12 +78,12 @@ function hardStop(name: string, actions: unknown[], match: RegExp, config: Recor
         expect(result.exit === 1, `exit ${result.exit}, expected 1 (${result.message})`);
         expect(task.status === 'parked', `status ${task.status}, expected parked`);
         expect(match.test(task.parked ?? ''), `parked reason "${task.parked}" does not match ${match}`);
-        const left = dirty(sandbox.project).filter((entry) => !entry.path.startsWith('.harness/'));
+        // Both trees are put back: the task's worktree on its branch, the main checkout on the base branch.
+        const tree = worktreePath(sandbox.project, id);
+        const left = [...dirty(sandbox.project), ...dirty(tree)].filter((entry) => !entry.path.startsWith('.harness/'));
         expect(left.length === 0, `tree not clean after quarantine: ${left.map((entry) => entry.path).join(', ')}`);
-        expect(
-          sandbox.git(['rev-parse', '--abbrev-ref', 'HEAD']).trim() === task.branch,
-          'not back on the task branch',
-        );
+        expect(currentBranch(tree) === task.branch, 'the worktree is not back on the task branch');
+        expect(currentBranch(sandbox.project) === 'main', 'the main checkout left the base branch');
         return `exit 1 · parked: ${task.parked}`;
       }),
   };
@@ -431,19 +432,20 @@ export const CASES: Case[] = [
       }),
   },
   {
-    name: 'browser: a named screenshot in the project root moves into the artifacts; without a browser it still parks',
+    name: 'browser: a named screenshot in the worktree root moves into the artifacts; without a browser it still parks',
     run: async () => {
       const shot = [{ write: 'shot.png', content: 'png' }, { say: 'qa: PASS' }];
       const kept = await withSandbox(withApp('ok'), async (sandbox) => {
         const { result } = await qaUnit(sandbox, shot);
         expect(result.exit === 0, `browser unit exit ${result.exit}: ${result.message}`);
-        expect(!existsSync(join(sandbox.project, 'shot.png')), 'shot.png is still in the project root');
+        const tree = worktreePath(sandbox.project, result.task ?? '');
+        expect(!existsSync(join(tree, 'shot.png')), 'shot.png is still in the worktree root');
         expect(
           existsSync(join(sandbox.project, '.harness/artifacts', result.task ?? '', 'shot.png')),
           'not in artifacts',
         );
         expect(
-          /moved the browser's shot\.png from the project root/.test(readLog(sandbox, result.task ?? '')),
+          /moved the browser's shot\.png from the worktree root/.test(readLog(sandbox, result.task ?? '')),
           'no Log line',
         );
         return 'moved into the artifacts, Log line';
@@ -746,11 +748,11 @@ export const CASES: Case[] = [
         await supervise(sandbox.project, { ...sandbox.agent, onceThrough: true, maxUnits: 3 });
         const done = sandbox.task(id).fields;
         expect(done.status === 'done', `status ${done.status}, expected done after implement · qa · judge`);
-        sandbox.git(['checkout', '--quiet', done.branch ?? '?']);
-        writeFileSync(join(sandbox.project, 'src', 'hand.txt'), 'by hand\n');
-        sandbox.git(['add', 'src/hand.txt']);
-        sandbox.git(['commit', '--quiet', '-m', 'tweak by hand']);
-        sandbox.git(['checkout', '--quiet', 'main']);
+        // A human commits in the task's worktree, which is kept until delivery.
+        const tree = worktreePath(sandbox.project, id);
+        writeFileSync(join(tree, 'src', 'hand.txt'), 'by hand\n');
+        git(tree, ['add', 'src/hand.txt']);
+        git(tree, ['commit', '--quiet', '-m', 'tweak by hand']);
         const result = await runUnit(sandbox.project, sandbox.agent);
         const task = sandbox.task(id).fields;
         expect(result.exit === 1 && task.status === 'parked', `exit ${result.exit}, status ${task.status}`);
@@ -760,6 +762,114 @@ export const CASES: Case[] = [
         expect(remote === '', 'the branch was pushed');
         return `parked · ${task.parked}`;
       }),
+  },
+  {
+    name: 'worktree: the main checkout stays on main through a whole task; the commit is made in the worktree',
+    run: () =>
+      withSandbox({ autonomy: { mode: 'full' } }, async (sandbox) => {
+        const id = seedTask(sandbox, READY);
+        const tree = worktreePath(sandbox.project, id);
+        const seen: string[] = [];
+        for (let unit = 0; unit < 3; unit++) {
+          const result = await runUnit(sandbox.project, sandbox.agent);
+          expect(result.exit === 0, `unit ${unit + 1} exit ${result.exit}: ${result.message}`);
+          expect(currentBranch(sandbox.project) === 'main', `the main checkout left main after ${result.stage}`);
+          seen.push(`${result.stage}:${existsSync(tree) ? 'worktree' : 'gone'}`);
+          if (result.stage === 'implement') {
+            const branch = sandbox.task(id).fields.branch ?? '?';
+            expect(currentBranch(tree) === branch, `the worktree is on ${currentBranch(tree)}, not ${branch}`);
+            expect(existsSync(join(tree, 'src/feature.txt')), 'the feature file is not in the worktree');
+            expect(!existsSync(join(sandbox.project, 'src/feature.txt')), 'the feature file leaked into main');
+          }
+        }
+        const task = sandbox.task(id).fields;
+        expect(task.status === 'done', `status ${task.status}`);
+        const commits = sandbox
+          .git(['rev-list', `main..${task.branch}`])
+          .trim()
+          .split('\n')
+          .filter(Boolean);
+        expect(commits.length === 1, `${commits.length} commits on ${task.branch}`);
+        expect(!existsSync(tree), 'the worktree is still there after done (delivery off)');
+        const status = dirty(sandbox.project).map((entry) => entry.path);
+        expect(!status.some((path) => path.startsWith('.harness/worktrees')), `main shows ${status.join(', ')}`);
+        return `${seen.join(' ')} · main stayed on main · 1 commit on ${task.branch}`;
+      }),
+  },
+  {
+    name: 'worktree: a task branch from before worktrees gets one, even when the main checkout sits on it',
+    run: () =>
+      withSandbox({}, async (sandbox) => {
+        const id = seedTask(sandbox, READY);
+        const branch = 'harness/T-001-add-the-feature-file';
+        // The old runner left the main checkout on the task branch, with a commit on it.
+        sandbox.git(['checkout', '--quiet', '-b', branch]);
+        writeFileSync(join(sandbox.project, 'src', 'old.txt'), 'round 1\n');
+        sandbox.git(['add', 'src/old.txt']);
+        sandbox.git(['commit', '--quiet', '-m', `${id}: Add the feature file (round 1)`]);
+        const path = sandbox.taskPath(id);
+        const loaded = loadTask(path);
+        setField(loaded.doc, 'branch', branch);
+        saveTask(path, loaded.doc);
+        const result = await runUnit(sandbox.project, sandbox.agent);
+        expect(result.exit === 0, `exit ${result.exit}: ${result.message}`);
+        const tree = worktreePath(sandbox.project, id);
+        expect(currentBranch(sandbox.project) === 'main', 'the main checkout is not back on main');
+        expect(currentBranch(tree) === branch, 'the worktree is not on the existing branch');
+        expect(existsSync(join(tree, 'src/old.txt')), 'the worktree lost the earlier round');
+        const commits = sandbox
+          .git(['rev-list', `main..${branch}`])
+          .trim()
+          .split('\n')
+          .filter(Boolean);
+        expect(commits.length === 2, `${commits.length} commits on ${branch}, expected the old one and this round`);
+        expect(new RegExp(`made from ${branch}`).test(readLog(sandbox, id)), 'no Log line for the worktree');
+        return `main back on main · worktree on ${branch} · 2 commits`;
+      }),
+  },
+  hardStop(
+    'worktree: an edit in the main checkout during a worktree unit parks the task, both trees put back',
+    [{ default: true }, { write: '../../../README.md', content: 'changed by the agent\n' }],
+    /main checkout: out-of-scope edit: README\.md/,
+  ),
+  {
+    name: 'worktree: after delivery the worktree is gone and the branch is on origin',
+    run: () =>
+      withSandbox({ autonomy: { mode: 'full' }, deliver: { pr: true } }, async (sandbox) => {
+        const id = seedTask(sandbox, READY);
+        const result = await supervise(sandbox.project, { ...sandbox.agent, onceThrough: true });
+        const task = sandbox.task(id).fields;
+        expect(result.exit === 0, `supervisor exit ${result.exit}: ${result.reason}`);
+        expect(task.status === 'delivered', `status ${task.status}`);
+        expect(!existsSync(worktreePath(sandbox.project, id)), 'the worktree is still there');
+        const remote = sandbox.git(['ls-remote', '--heads', 'origin', task.branch ?? '?']).trim();
+        expect(remote !== '', 'the branch is not on origin');
+        const trees = sandbox.git(['worktree', 'list', '--porcelain']).match(/^worktree /gm) ?? [];
+        expect(trees.length === 1, `${trees.length} worktrees registered, expected only the main checkout`);
+        return `delivered · worktree removed · ${task.branch} on origin`;
+      }),
+  },
+  {
+    name: 'worktree: setup runs once in a new worktree; a failing setup stops the run and leaves no worktree',
+    run: async () => {
+      const ran = await withSandbox({ worktree: { setup: 'true' } }, async (sandbox) => {
+        const id = seedTask(sandbox, READY);
+        const result = await runUnit(sandbox.project, sandbox.agent);
+        expect(result.exit === 0, `exit ${result.exit}: ${result.message}`);
+        expect(/setup `true` ran in the worktree/.test(readLog(sandbox, id)), 'no setup line in the Log');
+        return 'setup ran';
+      });
+      const failed = await withSandbox({ worktree: { setup: 'echo boom >&2; exit 7' } }, async (sandbox) => {
+        const id = seedTask(sandbox, READY);
+        const result = await runUnit(sandbox.project, sandbox.agent);
+        expect(result.exit === 2, `exit ${result.exit}, expected 2 (${result.message})`);
+        expect(/worktree\.setup .* failed \(exit 7\): boom/.test(result.message), `message: ${result.message}`);
+        expect(!existsSync(worktreePath(sandbox.project, id)), 'the failed worktree is still there');
+        expect(sandbox.task(id).fields.status === 'ready', 'the task moved');
+        return 'failed setup → exit 2, no worktree, task untouched';
+      });
+      return `${ran} · ${failed}`;
+    },
   },
   {
     name: 'supervisor: one loop per checkout (lock)',

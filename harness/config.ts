@@ -70,6 +70,12 @@ export interface HarnessConfig {
   /** `pr: true` → a done task's branch is pushed to `remote` and a pull request is opened. Nothing ever merges it. */
   deliver: { pr: boolean; remote: string };
   app: AppConfig | null;
+  /**
+   * Code units (prototype, implement, qa, judge) run in the task's own git worktree, `.harness/worktrees/T-NNN`.
+   * `setup` runs there once, after it is made (e.g. `pnpm install --prefer-offline`); null = link the main
+   * checkout's `node_modules` instead.
+   */
+  worktree: { setup: string | null };
   /** Telegram events to send (keys in env or `.env`; none → silent). */
   notify: { events: NotifyEvent[] };
   agent: {
@@ -116,6 +122,7 @@ export const DEFAULT_CONFIG: HarnessConfig = {
   },
   deliver: { pr: false, remote: 'origin' },
   app: null,
+  worktree: { setup: null },
   notify: { events: [...NOTIFY_EVENTS] },
   agent: {
     command: null,
@@ -199,6 +206,8 @@ export function loadConfig(project: string): HarnessConfig {
     if (bad.length) throw new ConfigError(`app.stages: unknown ${bad.join(', ')} (${UNIT_STAGES.join(' | ')})`);
     config.app = app;
   }
+  if (config.worktree.setup !== null && typeof config.worktree.setup !== 'string')
+    throw new ConfigError('worktree.setup is a shell command or null');
   const unknown = config.notify.events.filter((event) => !(NOTIFY_EVENTS as readonly string[]).includes(event));
   if (unknown.length)
     throw new ConfigError(`notify.events: unknown ${unknown.join(', ')} (${NOTIFY_EVENTS.join(' | ')})`);

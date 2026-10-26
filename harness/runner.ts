@@ -41,6 +41,7 @@ import {
   writeAgentsFile,
 } from './agents.ts';
 import { buildMemory } from './memory.ts';
+import { ensureWorktree, removeWorktree, worktreePath } from './worktree.ts';
 import { deliverTask } from './deliver.ts';
 import { noticeFor, notify } from './notify.ts';
 import { branchExists, commitsBetween, currentBranch, dirty, git, head, sh } from './git.ts';
@@ -118,6 +119,8 @@ export function invocation(
   options: Pick<RunOptions, 'agentCommand'> = {},
   /** The unit's MCP config (app stages with a running app): the only MCP server it gets, and its tools allowed. */
   mcpConfig: string | null = null,
+  /** A unit in a worktree: the main checkout's `.harness/`, where its task file, artifacts and journal links lead. */
+  addDir: string | null = null,
 ): Invocation {
   const override = options.agentCommand ?? process.env.AGENT_CMD ?? config.agent.command;
   if (override) {
@@ -137,6 +140,7 @@ export function invocation(
     config.agent.settingSources,
     '--agents',
     agentsFile,
+    ...(addDir ? ['--add-dir', addDir] : []),
     ...(mcpConfig ? ['--mcp-config', mcpConfig, '--strict-mcp-config'] : []),
     // Variadic: it must stay last.
     '--allowedTools',
@@ -223,8 +227,21 @@ export async function runUnit(project: string, options: RunOptions = {}): Promis
         );
     }
   }
+  // A finished task's worktree goes once its app has stopped; the branch stays (it carries the pull request).
+  if (result.task && (result.to === 'delivered' || (result.to === 'done' && !deliversPr(project)))) {
+    const note = removeWorktree(project, worktreePath(project, result.task));
+    if (note) appendProgress(tracePaths(project), `${result.task}: ${note}`);
+  }
   if (result.task && result.moved) await notifyAfter(project, result);
   return result;
+}
+
+function deliversPr(project: string): boolean {
+  try {
+    return loadConfig(project).deliver.pr;
+  } catch {
+    return true; // unknown: keep the worktree
+  }
 }
 
 /** Tells the human what the step left them (notify.ts). A notification never fails or delays a unit beyond 5 s. */
@@ -417,20 +434,28 @@ async function agentUnit(
   const who = `${role} · unit ${unit}`;
   const statusAtPick = task.fields.status;
 
-  // -- branch: spec/plan run on the base branch; code-writing and reviewing units on the task branch.
+  // -- trees: spec/plan run in the main checkout on the base branch; code-writing and reviewing units in the task's
+  //    own worktree on the task branch (harness/worktree.ts). The main checkout never leaves the base branch.
   let branch = config.baseBranch;
+  let tree = project;
   try {
-    if (stage === 'spec' || stage === 'plan') {
-      checkout(project, config.baseBranch);
-    } else {
+    // A project from before worktrees may have its main checkout on a task branch; the pick checked it is clean.
+    checkout(project, config.baseBranch);
+    if (stage !== 'spec' && stage !== 'plan') {
       branch = task.fields.branch ?? `harness/${id}-${slugify(task.fields.title)}`;
-      if (!branchExists(project, branch)) {
-        if (!writesCode) throw new ConfigError(`${id} is in ${statusAtPick} but has no branch ${branch}`);
-        git(project, ['checkout', '--quiet', '-b', branch, config.baseBranch]);
-      } else {
-        checkout(project, branch);
-      }
+      if (!writesCode && !branchExists(project, branch))
+        throw new ConfigError(`${id} is in ${statusAtPick} but has no branch ${branch}`);
+      const made = ensureWorktree(project, id, branch, config.baseBranch, config.worktree.setup);
+      tree = made.tree;
+      for (const note of made.notes) appendLog(task.doc, `  ↳ ${note}`);
       setField(task.doc, 'branch', branch);
+      const stale = dirty(tree)
+        .map((entry) => entry.path)
+        .filter(outsideHarness);
+      if (stale.length)
+        throw new ConfigError(
+          `the worktree ${relative(project, tree)} is dirty and the loop did not make it: ${stale.slice(0, 5).join(', ')}`,
+        );
     }
   } catch (error) {
     return { exit: EXIT.config, message: (error as Error).message, task: id, moved: false };
@@ -438,9 +463,9 @@ async function agentUnit(
   // -- the app (qa, prototype): started before the snapshot, so what the server writes at start is not the unit's.
   let appUrl: string | null = null;
   if (config.app?.stages.includes(stage)) {
-    const dirtyBefore = new Set(dirty(project).map((entry) => entry.path));
-    const started = await startApp(config.app, project, { log: paths.appLog(unit), record: paths.app(unit) });
-    if (started.ok) Object.assign(started.app, { project, dirtyBefore });
+    const dirtyBefore = new Set(dirty(tree).map((entry) => entry.path));
+    const started = await startApp(config.app, tree, { log: paths.appLog(unit), record: paths.app(unit) });
+    if (started.ok) Object.assign(started.app, { project: tree, dirtyBefore });
     if (started.ok) {
       apps.push(started.app);
       appUrl = started.app.url;
@@ -457,7 +482,16 @@ async function agentUnit(
   saveTask(task.path, task.doc);
 
   const startedAt = new Date().toISOString();
-  const before = snapshot(project);
+  const before = snapshot(tree);
+  // A unit in a worktree: the main checkout holds its task file, artifacts and journal, and must not change otherwise.
+  const beforeMain = tree === project ? null : snapshot(project);
+  const restoreTrees = (allowedNew: readonly string[]): string =>
+    [
+      quarantine(tree, before, `${id} unit ${unit}`, [], allowedNew),
+      ...(beforeMain ? [quarantine(project, beforeMain, `${id} unit ${unit}`, [], allowedNew)] : []),
+    ]
+      .filter(Boolean)
+      .join('; ');
   const beforeText = readFileSync(task.path, 'utf8');
   const beforeDoc = parseTask(beforeText);
   const status = taskFields(beforeDoc).status;
@@ -475,7 +509,14 @@ async function agentUnit(
   }
   // The specialists browse, not only the coordinator: a subagent gets the tools its list names.
   writeAgentsFile(agentsFile, specialists, config, mcpFile ? [BROWSER_TOOLS] : []);
-  const how = invocation(config, model, agentsFile, options, mcpFile);
+  const how = invocation(
+    config,
+    model,
+    agentsFile,
+    options,
+    mcpFile,
+    tree === project ? null : join(project, '.harness'),
+  );
   const memory = buildMemory(project, paths, task.fields, stage, config.baseBranch);
   // The folder exists before the agent starts: `mkdir` is not on the allowlist (pilot lesson 3).
   mkdirSync(join(project, artifacts), { recursive: true });
@@ -495,8 +536,9 @@ async function agentUnit(
         specialists,
         memory,
         appUrl,
+        worktree: tree === project ? null : relative(project, tree),
       }),
-      cwd: project,
+      cwd: tree,
       tracePath: paths.unit(unit),
       timeoutMs: config.limits.unitTimeoutMinutes * 60_000,
       env: {
@@ -526,15 +568,16 @@ async function agentUnit(
   // -- a browser unit's named screenshots: Playwright MCP resolves an explicit file name against the workspace root,
   //    so `shot.png` lands in the project root. Not a defect in the code — move it next to the other evidence.
   //    The Log line is written with the runner's own lines below, after the task-file contract has run.
-  const movedShots = mcpFile ? browserLeftovers(project, before.dirty) : [];
-  for (const name of movedShots) renameSync(join(project, name), join(project, artifacts, name));
+  const movedShots = mcpFile ? browserLeftovers(tree, before.dirty) : [];
+  for (const name of movedShots) renameSync(join(tree, name), join(project, artifacts, name));
   const shotLines = movedShots.map(
-    (name) => `  ↳ moved the browser's ${name} from the project root into ${artifacts}/`,
+    (name) =>
+      `  ↳ moved the browser's ${name} from the ${tree === project ? 'project' : 'worktree'} root into ${artifacts}/`,
   );
 
   // -- the agent command does not exist: configuration, waiting fixes nothing.
   if (run.code === 127 || /ENOENT/.test(run.spawnError ?? '')) {
-    const note = quarantine(project, before, `${id} unit ${unit}`, [], []);
+    const note = restoreTrees([]);
     writeFileSync(task.path, beforeText);
     const message = `agent command not found: ${lastLine(run.output) || how.display}`;
     say(`unit ${unit} · ${id} · exit 2 · ${message}${note ? ` · ${note}` : ''}`);
@@ -543,7 +586,7 @@ async function agentUnit(
 
   // -- the agent could not run: put everything back, the task is untouched, the supervisor waits.
   if (run.spawnError || (run.code !== 0 && AGENT_DOWN.test(run.output))) {
-    const note = quarantine(project, before, `${id} unit ${unit}`, [], []);
+    const note = restoreTrees([]);
     writeFileSync(task.path, beforeText);
     // The result text says why ("You've hit your session limit · resets 9:10pm (…)"); the last stream-json line
     // is often a bare session_state_changed event (pilot lesson 9).
@@ -557,12 +600,23 @@ async function agentUnit(
 
   // -- contracts that do not depend on the stage.
   const violations: string[] = [];
-  const scope = judgeScope(project, before, {
+  const harnessAllowed = [taskRel, `${artifacts}/**`, '.harness/JOURNAL.md'];
+  const scope = judgeScope(tree, before, {
     branch,
     allowed: writesCode ? task.fields.scope : [],
-    harnessAllowed: [taskRel, `${artifacts}/**`, '.harness/JOURNAL.md'],
+    // In a worktree the loop files are links to the main checkout and are judged there; nothing else under its
+    // `.harness/` (the versioned config) may change.
+    harnessAllowed: beforeMain ? [] : harnessAllowed,
   });
   violations.push(...scope.violations);
+  if (beforeMain) {
+    const main = judgeScope(project, beforeMain, { branch: config.baseBranch, allowed: [], harnessAllowed });
+    // Remote refs are shared by every worktree: a push is reported once.
+    for (const violation of main.violations) {
+      const line = /^(push|loop-owned file):/.test(violation) ? violation : `main checkout: ${violation}`;
+      if (!violations.includes(line)) violations.push(line);
+    }
+  }
   let afterDoc: TaskDoc = beforeDoc;
   try {
     afterDoc = parseTask(readFileSync(task.path, 'utf8'));
@@ -578,7 +632,7 @@ async function agentUnit(
   const park = (reasons: string[], restore: boolean): UnitResult => {
     let note = '';
     if (restore) {
-      note = quarantine(project, before, `${id} unit ${unit}`, [], [`${artifacts}/**`]);
+      note = restoreTrees([`${artifacts}/**`]);
       writeFileSync(task.path, beforeText);
     }
     const doc = parseTask(readFileSync(task.path, 'utf8'));
@@ -644,7 +698,7 @@ async function agentUnit(
       break;
     }
     case 'prototype': {
-      if (scope.changed.length) commit = commitUnit(project, scope.changed, `${id}: ${task.fields.title} (prototype)`);
+      if (scope.changed.length) commit = commitUnit(tree, scope.changed, `${id}: ${task.fields.title} (prototype)`);
       setField(doc, 'prototype', 'review');
       appendLog(doc, `prototype drafting → review · ${who}`);
       // Not a hard stop — a route alone is reviewable — but the human should know why the dashboard shows no picture.
@@ -657,7 +711,7 @@ async function agentUnit(
         // A later round may find nothing to fix in the code (a wrong reject, a broken check): when the branch already
         // holds this task's commits, qa and the judge decide again. A round with no work on the branch is barren.
         // Not `bounces`: Reopen resets it, and the pilot's reopened round was parked here (lesson 4).
-        if (commitsBetween(project, config.baseBranch, 'HEAD').length === 0)
+        if (commitsBetween(tree, config.baseBranch, 'HEAD').length === 0)
           return park(['implement: no change inside scope'], true);
         appendLog(
           doc,
@@ -666,7 +720,7 @@ async function agentUnit(
         target = 'qa';
         break;
       }
-      const gate = runGate(project, task.fields.gate ?? config.gate, before.head);
+      const gate = runGate(tree, task.fields.gate ?? config.gate, before.head);
       if (!gate.ok)
         return park(
           [
@@ -680,7 +734,7 @@ async function agentUnit(
         );
       if (gate.collateral) appendLog(doc, `  ↳ gate red at base too — inherited, not this unit's: \`${gate.command}\``);
       const round = taskFields(doc).bounces + 1;
-      commit = commitUnit(project, scope.changed, `${id}: ${task.fields.title} (round ${round})`);
+      commit = commitUnit(tree, scope.changed, `${id}: ${task.fields.title} (round ${round})`);
       target = 'qa';
       break;
     }
@@ -689,7 +743,7 @@ async function agentUnit(
         target = findTransition(taskFields(doc), 'agent', 'qa-pass', ctx)?.target ?? 'judge';
         // Merged review closes the task here, so the closing contract runs here too.
         if (target === 'done') {
-          const closing = runClosing(project, parseCriteria(getSection(doc, 'Acceptance criteria')));
+          const closing = runClosing(tree, parseCriteria(getSection(doc, 'Acceptance criteria')));
           if (!closing.ok) target = bounce('qa-fail', `qa PASS but ${closing.reason}`);
         }
       } else if (verdict.verdict === 'FAIL') target = bounce('qa-fail', 'qa: FAIL');
@@ -698,7 +752,7 @@ async function agentUnit(
     }
     case 'judge': {
       if (verdict.verdict === 'CONFIRMED') {
-        const closing = runClosing(project, parseCriteria(getSection(doc, 'Acceptance criteria')));
+        const closing = runClosing(tree, parseCriteria(getSection(doc, 'Acceptance criteria')));
         if (closing.ok) target = 'done';
         else target = bounce('rejected', `judge CONFIRMED but ${closing.reason}`);
       } else {
@@ -755,6 +809,8 @@ export interface PromptInput {
   memory: string;
   /** The app the runner started for this unit, if any. */
   appUrl?: string | null;
+  /** The unit's worktree, relative to the project (code units); null = the main checkout. */
+  worktree?: string | null;
 }
 
 /** Stage prompt + standing rules + the specialists this stage may dispatch + memory + `## This run`. */
@@ -789,6 +845,9 @@ export function buildPrompt(input: PromptInput): string {
     `- Scope: ${task.scope.length ? task.scope.join(', ') : '(none yet — the plan sets it)'}`,
     `- Gate: ${task.gate ?? config.gate ?? '(none)'}`,
     `- Artifacts folder: ${input.artifacts}/`,
+    input.worktree
+      ? `- Working tree: ${input.worktree} — the task branch's own checkout, where you start. Its \`.harness/tasks\`, \`.harness/artifacts\` and \`.harness/JOURNAL.md\` are links to the main checkout's; use them as they are.`
+      : '',
     input.appUrl
       ? `- App: ${input.appUrl} — the runner started it and stops it after this unit; do not start or stop a server.`
       : '',
@@ -914,10 +973,10 @@ export function previewUnit(project: string, id: string): Preview {
   const registry = loadRegistry(project);
   const specialists = stageSpecialists(registry, stage, config);
   const agentsFile = join(paths.dir, 'preview.agents.json');
-  const branch =
-    stage === 'spec' || stage === 'plan'
-      ? config.baseBranch
-      : (fields.branch ?? `harness/${id}-${slugify(fields.title)}`);
+  const inMain = stage === 'spec' || stage === 'plan';
+  const branch = inMain ? config.baseBranch : (fields.branch ?? `harness/${id}-${slugify(fields.title)}`);
+  // Where the unit would run; nothing is made here.
+  const worktree = inMain ? null : relative(project, worktreePath(project, id));
   const memory = buildMemory(project, paths, fields, stage, config.baseBranch);
   const previewMcp = config.app?.stages.includes(stage) ? join(paths.dir, 'preview.mcp.json') : null;
   writeAgentsFile(agentsFile, specialists, config, previewMcp ? [BROWSER_TOOLS] : []);
@@ -928,7 +987,14 @@ export function previewUnit(project: string, id: string): Preview {
     ...(draft ? { note: `${id} is a draft: this is the spec unit it gets after Submit` } : {}),
     stage,
     role,
-    invocation: invocation(config, config.roles.models[role] ?? 'sonnet', agentsFile, {}, previewMcp),
+    invocation: invocation(
+      config,
+      config.roles.models[role] ?? 'sonnet',
+      agentsFile,
+      {},
+      previewMcp,
+      worktree ? join(project, '.harness') : null,
+    ),
     specialists: specialists.map((agent) => agent.name),
     prompt: buildPrompt({
       stage,
@@ -941,6 +1007,7 @@ export function previewUnit(project: string, id: string): Preview {
       specialists,
       memory,
       appUrl: config.app?.stages.includes(stage) ? `http://${config.app.host}:<port>` : null,
+      worktree,
     }),
   };
 }

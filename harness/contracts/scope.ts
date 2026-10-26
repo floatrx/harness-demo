@@ -7,7 +7,7 @@
 // - under `.harness/`, only the task's own file, its artifacts folder and the journal change — plus other task files
 //   whose content is exactly what a human wrote meanwhile (the human-write ledger), which are not the unit's doing.
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { currentBranch, dirty, git, head, remoteRefs, tryGit } from '../git.ts';
 import { isHumanWrite } from '../task/task.ts';
@@ -22,13 +22,19 @@ export interface Snapshot {
   harness: Map<string, Buffer>;
 }
 
+/**
+ * Not walked: the trace (the runner's own), the task worktrees (each is judged as its own tree), and symlinks — a
+ * worktree's `.harness/tasks`, `artifacts` and journal are links to the main checkout's, judged there.
+ */
 function walk(dir: string, root: string, out: Map<string, Buffer>): void {
   if (!existsSync(dir)) return;
   for (const name of readdirSync(dir)) {
     const path = join(dir, name);
     const rel = relative(root, path);
-    if (rel === '.harness/trace') continue;
-    if (statSync(path).isDirectory()) walk(path, root, out);
+    if (rel === '.harness/trace' || rel === '.harness/worktrees') continue;
+    const stat = lstatSync(path);
+    if (stat.isSymbolicLink()) continue;
+    if (stat.isDirectory()) walk(path, root, out);
     else out.set(rel, readFileSync(path));
   }
 }

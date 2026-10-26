@@ -44,7 +44,14 @@ export class ProjectError extends Error {
  * included: the runner writes them while it switches between the base and task branches, and a versioned copy that
  * differs between branches would make a checkout fail. `config.json` stays versioned.
  */
-export const IGNORED = ['.harness/trace/', '.harness/artifacts/', '.harness/tasks/', '.harness/JOURNAL.md'];
+export const IGNORED = [
+  '.harness/trace/',
+  '.harness/artifacts/',
+  '.harness/tasks/',
+  '.harness/JOURNAL.md',
+  // The task worktrees (harness/worktree.ts). A project made before them gets the line in `info/exclude` instead.
+  '.harness/worktrees/',
+];
 
 /** Secrets: the loop reads Telegram keys from `<project>/.env`, so that file must never be committed. */
 export const SECRET_IGNORES = ['.env'];
