@@ -148,7 +148,8 @@ test('the prompt carries the stage prompt, the rules, the specialists, memory an
     memory: '## Memory\n\n- fact',
   });
   const order = ['# Stage: qa', '## Standing rules', '## Specialists you may dispatch', '## Memory', '## This run'];
-  const positions = order.map((heading) => prompt.indexOf(heading));
+  // Headings at the start of a line: the stage prompts also name `## This run` inside their text.
+  const positions = order.map((heading) => prompt.search(new RegExp(`^${heading}(\\s|$)`, 'm')));
   assert.ok(
     positions.every((at, i) => at >= 0 && (i === 0 || at > (positions[i - 1] as number))),
     `order: ${positions}`,
@@ -244,4 +245,16 @@ test('preview shows the next unit of a task without running it', () => {
   } finally {
     sandbox.cleanup();
   }
+});
+
+test("a browser unit's specialists get the browser tools; the judge never does", async () => {
+  const { agentsJson, loadRegistry } = await import('./agents.ts');
+  const { DEFAULT_CONFIG } = await import('./config.ts');
+  const registry = loadRegistry(null).filter((agent) => ['qa', 'judge', 'designer'].includes(agent.name));
+  const json = agentsJson(registry, DEFAULT_CONFIG, undefined, ['mcp__playwright']);
+  assert.ok(json.qa?.tools?.includes('mcp__playwright'));
+  assert.ok(json.designer?.tools?.includes('mcp__playwright'));
+  assert.ok(!json.judge?.tools?.includes('mcp__playwright'));
+  const plain = agentsJson(registry, DEFAULT_CONFIG);
+  assert.ok(!plain.qa?.tools?.includes('mcp__playwright'), 'no browser tools without a browser');
 });

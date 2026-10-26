@@ -136,11 +136,16 @@ export function effectiveModel(agent: AgentDef, config: HarnessConfig): string |
   return (config.roles.models as Record<string, string | undefined>)[agent.name] ?? agent.model;
 }
 
-/** The `claude --agents` JSON for one stage. */
+/**
+ * The `claude --agents` JSON for one stage. `browserTools` (a browser unit only) joins the tool list of every specialist
+ * that names its tools — a subagent sees only the tools it lists — except the judge, which judges from the code and
+ * the QA evidence without a browser.
+ */
 export function agentsJson(
   agents: readonly AgentDef[],
   config: HarnessConfig,
   rules = standingRules(),
+  browserTools: readonly string[] = [],
 ): Record<string, { description: string; prompt: string; tools?: string[]; model?: string }> {
   return Object.fromEntries(
     agents.map((agent) => {
@@ -150,7 +155,9 @@ export function agentsJson(
         {
           description: agent.description,
           prompt: withStandingRules(agent.body, rules),
-          ...(agent.tools.length ? { tools: agent.tools } : {}),
+          ...(agent.tools.length
+            ? { tools: agent.name === 'judge' ? agent.tools : [...agent.tools, ...browserTools] }
+            : {}),
           ...(model ? { model } : {}),
         },
       ];
@@ -158,8 +165,13 @@ export function agentsJson(
   );
 }
 
-export function writeAgentsFile(path: string, agents: readonly AgentDef[], config: HarnessConfig): void {
-  writeFileSync(path, `${JSON.stringify(agentsJson(agents, config), null, 2)}\n`);
+export function writeAgentsFile(
+  path: string,
+  agents: readonly AgentDef[],
+  config: HarnessConfig,
+  browserTools: readonly string[] = [],
+): void {
+  writeFileSync(path, `${JSON.stringify(agentsJson(agents, config, standingRules(), browserTools), null, 2)}\n`);
 }
 
 /** Problems that make a run meaningless: the judge must not share a model with the author of the work. */

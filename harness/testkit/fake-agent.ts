@@ -34,6 +34,8 @@ export type Action =
   | { sleep: number }
   | { exit: number }
   | { usageLimit: true }
+  /** Looks at the app the runner started (HARNESS_APP_URL) and saves the page as a "screenshot" in the artifacts. */
+  | { browse: { path?: string; save: string } }
   /** Prints stream-json like `claude -p`: an optional tool result quoting a specialist, then the final result. */
   | {
       stream: {
@@ -246,6 +248,11 @@ async function play(actions: Action[]): Promise<void> {
         parent_tool_use_id: null,
         message: { content: [{ type: 'tool_result', tool_use_id: agentId, content: `${role} done` }] },
       });
+    } else if ('browse' in action) {
+      const url = process.env.HARNESS_APP_URL;
+      const page = url ? await (await fetch(`${url}${action.browse.path ?? '/'}`)).text() : 'no app\n';
+      mkdirSync(artifacts, { recursive: true });
+      writeFileSync(join(artifacts, action.browse.save), page);
     } else if ('usageLimit' in action) {
       console.error('Claude AI usage limit reached. Your limit will reset at 5pm.');
       process.exit(1);

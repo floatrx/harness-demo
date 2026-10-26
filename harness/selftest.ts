@@ -458,6 +458,35 @@ export const CASES: Case[] = [
     },
   },
   {
+    name: 'browser: a prototype unit with an app saves prototype.png from the running route (QA browser B3)',
+    run: () =>
+      withSandbox(withApp('ok'), async (sandbox) => {
+        const id = seedTask(sandbox, { status: 'planned', kind: 'ui', scope: ['src/**'], closes: ['true'] });
+        const path = sandbox.taskPath(id);
+        saveTask(path, approve(loadTask(path).doc));
+        sandbox.scenario({
+          steps: {
+            prototype: [
+              [
+                { browse: { path: '/prototype', save: 'prototype.png' } },
+                { section: 'Prototype', content: 'Route `/prototype` · `prototype.png` · round 1' },
+              ],
+            ],
+          },
+        });
+        const result = await runUnit(sandbox.project, sandbox.agent);
+        const task = sandbox.task(id).fields;
+        expect(result.exit === 0 && task.prototype === 'review', `exit ${result.exit}, prototype ${task.prototype}`);
+        const shot = join(sandbox.project, '.harness/artifacts', id, 'prototype.png');
+        expect(
+          existsSync(shot) && /fake app · \/prototype/.test(readFileSync(shot, 'utf8')),
+          'no prototype.png from the app',
+        );
+        expect(!/no image in/.test(readLog(sandbox, id)), 'the runner still says there is no image');
+        return 'prototype.png taken from the running app; prototype: review';
+      }),
+  },
+  {
     name: 'bounce round: no change after a wrong reject goes back to qa, and the judge decides again (pilot lesson 4)',
     run: () =>
       withSandbox({}, async (sandbox) => {

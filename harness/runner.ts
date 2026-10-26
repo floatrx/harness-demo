@@ -456,7 +456,6 @@ async function agentUnit(
 
   const specialists = stageSpecialists(registry, stage, config);
   const agentsFile = paths.agents(unit);
-  writeAgentsFile(agentsFile, specialists, config);
   const model = config.roles.models[role] ?? 'sonnet';
   // A browser only next to a running app: without one there is nothing to look at.
   let mcpFile: string | null = null;
@@ -464,6 +463,8 @@ async function agentUnit(
     mcpFile = paths.mcp(unit);
     writeMcpConfig(mcpFile, config.app.browser, join(project, artifacts));
   }
+  // The specialists browse, not only the coordinator: a subagent gets the tools its list names.
+  writeAgentsFile(agentsFile, specialists, config, mcpFile ? [BROWSER_TOOLS] : []);
   const how = invocation(config, model, agentsFile, options, mcpFile);
   const memory = buildMemory(project, paths, task.fields, stage, config.baseBranch);
   // The folder exists before the agent starts: `mkdir` is not on the allowlist (pilot lesson 3).
@@ -901,13 +902,13 @@ export function previewUnit(project: string, id: string): Preview {
   const registry = loadRegistry(project);
   const specialists = stageSpecialists(registry, stage, config);
   const agentsFile = join(paths.dir, 'preview.agents.json');
-  writeAgentsFile(agentsFile, specialists, config);
   const branch =
     stage === 'spec' || stage === 'plan'
       ? config.baseBranch
       : (fields.branch ?? `harness/${id}-${slugify(fields.title)}`);
   const memory = buildMemory(project, paths, fields, stage, config.baseBranch);
   const previewMcp = config.app?.stages.includes(stage) ? join(paths.dir, 'preview.mcp.json') : null;
+  writeAgentsFile(agentsFile, specialists, config, previewMcp ? [BROWSER_TOOLS] : []);
   if (previewMcp && config.app)
     writeMcpConfig(previewMcp, config.app.browser, join(project, `.harness/artifacts/${id}`));
   return {
