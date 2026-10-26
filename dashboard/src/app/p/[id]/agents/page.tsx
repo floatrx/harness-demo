@@ -186,7 +186,8 @@ export default async function AgentsPage({ params, searchParams }: Props) {
             <h2 className="mb-2 text-[13px] font-semibold">Invocation</h2>
             {page.invocation.override && (
               <p className="mb-2 rounded-card bg-accent-soft px-2.5 py-1.5 text-xs text-accent">
-                A stand-in replaces <Code>claude</Code>: <span className="break-all">{page.invocation.override}</span>
+                A stand-in replaces <Code>claude</Code>:
+                <span className="block break-all">{page.invocation.override}</span>
               </p>
             )}
             <dl className="grid grid-cols-[110px_minmax(0,1fr)] gap-y-1.5 text-[12.5px]">

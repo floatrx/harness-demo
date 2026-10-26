@@ -124,12 +124,12 @@ test('the agents page: every base agent, the stages that offer it, green checks,
   assert.equal(page.invocation.permissionMode, 'dontAsk');
 });
 
-test('the stand-in command shows the home directory as ~', () => {
+test('the stand-in command shows no folder layout: the checkout is <harness>, the home directory ~', () => {
   const saved = process.env.AGENT_CMD;
   process.env.AGENT_CMD = `node ${FAKE_AGENT}`;
   try {
     const { invocation } = loadAgentsPage(projectId);
-    assert.ok(invocation.override?.startsWith('node '));
+    assert.equal(invocation.override, 'node <harness>/harness/testkit/fake-agent.ts');
     assert.ok(!JSON.stringify(invocation).includes(homedir()));
   } finally {
     if (saved === undefined) delete process.env.AGENT_CMD;

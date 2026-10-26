@@ -30,7 +30,7 @@ export const RESUMABLE = ['spec', 'plan'] as const satisfies readonly Status[];
 /** From `ready` on, a task must carry a `scope:` — it is the implementer's pathspec. */
 export const SCOPED: readonly Status[] = ['ready', 'implementing', 'qa', 'judge', 'done', 'delivered'];
 
-export const OWNER: Record<Status, 'human' | 'agent' | 'none'> = {
+export const OWNER: Record<Status, 'human' | 'agent' | 'runner' | 'none'> = {
   draft: 'human',
   spec: 'agent',
   'needs-input': 'human',
@@ -41,7 +41,7 @@ export const OWNER: Record<Status, 'human' | 'agent' | 'none'> = {
   implementing: 'agent',
   qa: 'agent',
   judge: 'agent',
-  done: 'agent',
+  done: 'runner', // with deliver.pr the runner pushes and opens the pull request; without it, done is the end
   delivered: 'none',
   parked: 'human',
 };

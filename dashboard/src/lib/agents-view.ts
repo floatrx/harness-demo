@@ -52,8 +52,9 @@ export interface AgentsPage {
   outbound: { pr: boolean; remote: string; telegram: string | null };
 }
 
-/* Anywhere in the string: the stand-in command starts with `node `, the path comes after. */
-const home = (text: string) => text.replaceAll(homedir(), '~');
+/* Paths inside this checkout read `<harness>/…`, the rest of the home directory `~/…`: a screenshot someone posts
+   shows no folder layout. Anywhere in the string — the stand-in command starts with `node `. */
+const home = (text: string) => text.replaceAll(REPO_ROOT, '<harness>').replaceAll(homedir(), '~');
 
 export function loadAgentsPage(projectId: string): AgentsPage {
   const project = findProject(projectId);
