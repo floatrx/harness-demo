@@ -38,9 +38,9 @@ export const TaskCardBody = ({ card, projectId }: Props) => (
       )}
     </div>
     <h3 className="text-[13px] leading-snug font-semibold">{card.title}</h3>
-    {card.hasPrototype && (
+    {card.prototypeImage && (
       <img
-        src={`/api/p/${projectId}/artifacts/${card.id}/prototype.svg`}
+        src={`/api/p/${projectId}/artifacts/${card.id}/${card.prototypeImage}`}
         alt={`Prototype of ${card.id}`}
         className="w-full rounded-md bg-background"
       />
@@ -53,6 +53,18 @@ export const TaskCardBody = ({ card, projectId }: Props) => (
         <>
           {card.agentNext && <ClaudeSpinner state="idle" size="sm" title="waits for an agent" />}
           <span className={cn('line-clamp-2 leading-snug', card.isBad && 'text-danger')}>{card.meta}</span>
+          {card.pr && (
+            /* Above the card's own link (relative z-10): this one opens GitHub. */
+            <a
+              href={card.pr}
+              target="_blank"
+              rel="noreferrer"
+              className="relative z-10 ml-auto flex-none font-semibold text-accent hover:underline"
+              data-testid="card-pr"
+            >
+              PR #{card.pr.split('/').at(-1)} ↗
+            </a>
+          )}
         </>
       )}
     </div>

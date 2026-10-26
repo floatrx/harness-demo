@@ -19,6 +19,7 @@ const task = (id: string, status: TaskFields['status'], extra: Partial<TaskField
   scope: [],
   gate: null,
   branch: null,
+  pr: null,
   parked: null,
   created: null,
   ...extra,

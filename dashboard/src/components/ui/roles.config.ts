@@ -9,5 +9,4 @@ export const ROLE_IDENTITY: Record<string, { label: string; hue: number }> = {
   debugger: { label: 'Db', hue: 22 },
   qa: { label: 'QA', hue: 95 },
   judge: { label: 'Jd', hue: 350 },
-  delivery: { label: 'Dl', hue: 250 },
 };

@@ -19,18 +19,7 @@ import { buildPrompt, invocation } from './runner.ts';
 import { makeSandbox, seedTask } from './testkit/sandbox.ts';
 import { previewUnit } from './runner.ts';
 
-const BASE_ROLES = [
-  'debugger',
-  'delivery',
-  'designer',
-  'explorer',
-  'implementer',
-  'judge',
-  'planner',
-  'qa',
-  'tester',
-  'writer',
-];
+const BASE_ROLES = ['debugger', 'designer', 'explorer', 'implementer', 'judge', 'planner', 'qa', 'tester', 'writer'];
 
 function tempBase(): string {
   const dir = mkdtempSync(join(tmpdir(), 'harness-agents-'));
@@ -147,6 +136,7 @@ test('the prompt carries the stage prompt, the rules, the specialists, memory an
       scope: ['src/**'],
       gate: null,
       branch: 'harness/T-009-thing',
+      pr: null,
       parked: null,
       created: null,
     },

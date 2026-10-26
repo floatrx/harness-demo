@@ -5,36 +5,15 @@
 import { existsSync, readFileSync } from 'node:fs';
 import type { UnitStage } from './config.ts';
 import { branchExists, tryGit } from './git.ts';
-import type { TracePaths } from './paths.ts';
+import { type HandoffRecord, type TracePaths, readHandoffs } from './paths.ts';
 import type { TaskFields } from './task/task.ts';
 
 const JOURNAL_LINES = 30;
 const HANDOFFS = 5;
 const LOG_LINES = 8;
 
-interface Handoff {
-  unit?: number;
-  task?: string;
-  stage?: string;
-  from?: string;
-  to?: string;
-  verdict?: string | null;
-  reason?: string;
-  commit?: string | null;
-}
-
-function handoffsFor(paths: TracePaths, id: string): Handoff[] {
-  if (!existsSync(paths.handoffs)) return [];
-  return readFileSync(paths.handoffs, 'utf8')
-    .split('\n')
-    .filter(Boolean)
-    .flatMap((line) => {
-      try {
-        return [JSON.parse(line) as Handoff];
-      } catch {
-        return [];
-      }
-    })
+function handoffsFor(paths: TracePaths, id: string): HandoffRecord[] {
+  return readHandoffs(paths)
     .filter((record) => record.task === id)
     .slice(-HANDOFFS);
 }

@@ -22,17 +22,7 @@ import {
   findTransition,
 } from './transitions.ts';
 
-export const ROLES = [
-  'human',
-  'writer',
-  'planner',
-  'designer',
-  'implementer',
-  'qa',
-  'judge',
-  'delivery',
-  'runner',
-] as const;
+export const ROLES = ['human', 'writer', 'planner', 'designer', 'implementer', 'qa', 'judge', 'runner'] as const;
 export type Role = (typeof ROLES)[number];
 
 /** Who may write each `##` section. `runner` may write anything. */

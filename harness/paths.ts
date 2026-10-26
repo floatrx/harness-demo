@@ -66,6 +66,35 @@ export function appendHandoff(paths: TracePaths, record: Record<string, unknown>
   appendFileSync(paths.handoffs, `${JSON.stringify({ at: new Date().toISOString(), ...record })}\n`);
 }
 
+/** One line of `handoffs.jsonl`. Units carry `unit`; runner steps (advance, deliver) do not. */
+export interface HandoffRecord {
+  at: string;
+  task?: string;
+  stage?: string;
+  unit?: number;
+  from?: string;
+  to?: string;
+  exit?: number;
+  verdict?: string | null;
+  reason?: string;
+  commit?: string | null;
+  pr?: string;
+}
+
+export function readHandoffs(paths: TracePaths): HandoffRecord[] {
+  if (!existsSync(paths.handoffs)) return [];
+  return readFileSync(paths.handoffs, 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .flatMap((line) => {
+      try {
+        return [JSON.parse(line) as HandoffRecord];
+      } catch {
+        return [];
+      }
+    });
+}
+
 export function countLines(path: string): number {
   return existsSync(path) ? readFileSync(path, 'utf8').split('\n').filter(Boolean).length : 0;
 }

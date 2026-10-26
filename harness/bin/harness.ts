@@ -2,10 +2,11 @@
 // harness — the CLI. The dashboard calls the same functions and writes the same files.
 
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { loadConfig } from '../config.ts';
 import { readRunning, tracePaths } from '../paths.ts';
+import { sendTelegram, telegramKeys } from '../notify.ts';
 import { addProject, listProjects, removeProject, resolveProject } from '../projects.ts';
 import { describeQueue, previewUnit, runUnit } from '../runner.ts';
 import { baseAgentsDir, loadRegistry, registryProblems, standingRulesDrift, syncStandingRules } from '../agents.ts';
@@ -47,6 +48,9 @@ Agents and prompts
   harness agents [--check] [--sync]                 the registry (base + project), drift and model checks
   harness preview <T-NNN>                           the exact prompt and argv the next unit would get (no tokens)
 
+Notifications
+  harness notify [--test]                           where the Telegram keys come from; --test sends one message
+
 Every command but projects/self-test takes --project <path|id|name> (default: the current folder).
 Env: AGENT_CMD overrides the agent command (the fake agent: node harness/testkit/fake-agent.ts).
 
@@ -73,6 +77,7 @@ const { values, positionals } = parseArgs({
     deadline: { type: 'string' },
     'max-units': { type: 'string' },
     json: { type: 'boolean' },
+    test: { type: 'boolean' },
     help: { type: 'boolean', short: 'h' },
   },
 });
@@ -283,6 +288,28 @@ async function main(): Promise<void> {
       } catch (error) {
         fail((error as Error).message, 1);
       }
+      return;
+    }
+    case 'notify': {
+      let root: string | null = null;
+      try {
+        root = resolveProject(values.project);
+      } catch {
+        if (values.project) return fail(`no project ${values.project}`);
+      }
+      const keys = telegramKeys(root);
+      if (!keys) {
+        log('Telegram is off: no TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID in the environment, <project>/.env or');
+        log('~/.harness/.env (the first place that defines the token decides; an empty token switches it off).');
+        process.exitCode = values.test ? 1 : 0;
+        return;
+      }
+      log(`Telegram is on · keys from ${keys.source} · chat …${keys.chatId.slice(-4)}`);
+      if (!values.test) return;
+      const name = root ? basename(root) : 'harness';
+      const sent = await sendTelegram(keys, `<b>${name}</b> · harness notify --test: notifications reach this chat.`);
+      log(sent.ok ? '✓ sent' : `✗ not sent: ${sent.detail}`);
+      process.exitCode = sent.ok ? 0 : 1;
       return;
     }
     case 'self-test': {

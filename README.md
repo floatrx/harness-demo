@@ -9,7 +9,7 @@ contracts that the code checks — not by instructions the agent may ignore.
 
 - **Core** — a zero-dependency Node runner and supervisor; one fresh `claude -p` context per unit of work.
 - **Agents** — a coordinator delegates to an open registry of specialists (`writer`, `planner`, `designer`,
-  `implementer`, `qa`, `judge`, `delivery`, and any you add).
+  `tester`, `implementer`, `qa`, `judge`, and any you add). A done task's pull request is opened by the runner itself.
 - **Dashboard** — a Next.js control plane: projects, board, interview, live view, token stats.
 - **Example** — a small app in `examples/` with seed tasks, so you can watch the loop work end to end.
 

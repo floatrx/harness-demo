@@ -20,6 +20,7 @@ export interface TaskFields extends TransitionTask {
   scope: string[];
   gate: string | null;
   branch: string | null;
+  pr: string | null;
   parked: string | null;
   created: string | null;
 }
@@ -48,6 +49,8 @@ export function taskFields(doc: TaskDoc): TaskFields {
     scope: Array.isArray(scope) ? scope : [],
     gate: str(getField(doc, 'gate')),
     branch: str(getField(doc, 'branch')),
+    /** The pull request the runner opened (`deliver.pr`). */
+    pr: str(getField(doc, 'pr')),
     parked: str(getField(doc, 'parked')),
     created: str(getField(doc, 'created')),
   };

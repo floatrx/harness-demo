@@ -114,9 +114,9 @@ test('stats count the denial by tool name only', () => {
 
 test('the agents page: every base agent, the stages that offer it, green checks, the stand-in command', () => {
   const page = loadAgentsPage(projectId);
-  assert.equal(page.agents.length, 10);
+  assert.equal(page.agents.length, 9);
   assert.deepEqual(page.agents.find((agent) => agent.name === 'tester')?.offeredIn, ['implement']);
-  assert.deepEqual(page.agents.find((agent) => agent.name === 'delivery')?.offeredIn, []);
+  assert.deepEqual(page.agents.find((agent) => agent.name === 'explorer')?.offeredIn, ['plan']);
   assert.equal(page.coordinators.find((row) => row.stage === 'judge')?.model, 'opus');
   assert.deepEqual(page.problems, []);
   assert.deepEqual(page.drift, []);

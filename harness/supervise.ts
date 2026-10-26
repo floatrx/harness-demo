@@ -10,6 +10,8 @@
 
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { type HarnessConfig, ConfigError, loadConfig } from './config.ts';
+import { deliveryPreflight } from './deliver.ts';
+import { notify } from './notify.ts';
 import { sh } from './git.ts';
 import { appendProgress, ensureTrace, tracePaths } from './paths.ts';
 import { type RunOptions, type UnitResult, EXIT, runUnit } from './runner.ts';
@@ -63,6 +65,13 @@ export async function supervise(project: string, options: SuperviseOptions = {})
     if (error instanceof ConfigError) return { exit: 2, reason: error.message, units: [] };
     throw error;
   }
+  if (config.deliver.pr) {
+    const problem = deliveryPreflight(project, config, options.gh);
+    if (problem) {
+      say(`exit 2 · ${problem}`);
+      return { exit: 2, reason: problem, units: [] };
+    }
+  }
   const holder = lockHolder(project);
   if (holder && holder !== process.pid)
     return { exit: 2, reason: `another supervisor runs this checkout (pid ${holder})`, units: [] };
@@ -93,8 +102,14 @@ export async function supervise(project: string, options: SuperviseOptions = {})
     return !stopRequested();
   };
 
-  const finish = (exit: SuperviseResult['exit'], reason: string): SuperviseResult => {
+  /* The human hears how a run ended, unless they ended it themselves (Stop, a signal). */
+  const finish = async (exit: SuperviseResult['exit'], reason: string): Promise<SuperviseResult> => {
     say(`exit ${exit} · ${reason}`);
+    if (!/^stopped|^signal/.test(reason))
+      await notify(project, config, paths, {
+        event: 'supervisor',
+        text: `supervisor stopped (exit ${exit}): ${reason}`,
+      });
     return { exit, reason, units };
   };
 
@@ -130,6 +145,11 @@ export async function supervise(project: string, options: SuperviseOptions = {})
         case EXIT.agentDown: {
           if (waitedForAgent >= s.usageCeilingSeconds) return finish(4, `agent still down after ${waitedForAgent}s`);
           say(`agent could not run (${result.message}) — waiting`);
+          if (waitedForAgent === 0)
+            await notify(project, config, paths, {
+              event: 'supervisor',
+              text: `the agent could not run (${result.message}) — waiting, then retrying`,
+            });
           const started = Date.now();
           const ok = await waitForAgent(project, config, nap);
           waitedForAgent += Math.round((Date.now() - started) / 1000);

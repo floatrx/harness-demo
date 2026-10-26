@@ -81,11 +81,18 @@ export const LiveDock = ({ projectId }: Props) => {
             <tbody>
               {recent.map((unit) => (
                 <tr key={`${unit.unit}-${unit.at}`} className="border-b border-line-soft">
-                  <td className="w-6 py-1.5 text-muted tabular-nums">{unit.unit}</td>
+                  <td className="w-6 py-1.5 text-muted tabular-nums">{unit.unit ?? '↗'}</td>
                   <td className="py-1.5">
-                    <Link href={`/p/${projectId}/live?u=${unit.unit}`} className="hover:text-accent">
-                      <span className="text-muted tabular-nums">{unit.task}</span> {unit.from} → {unit.to}
-                    </Link>
+                    {unit.unit != null ? (
+                      <Link href={`/p/${projectId}/live?u=${unit.unit}`} className="hover:text-accent">
+                        <span className="text-muted tabular-nums">{unit.task}</span> {unit.from} → {unit.to}
+                      </Link>
+                    ) : (
+                      /* A runner step (delivery): no trace to open; the pull request is the link. */
+                      <a href={unit.pr ?? '#'} target="_blank" rel="noreferrer" className="hover:text-accent">
+                        <span className="text-muted tabular-nums">{unit.task}</span> {unit.from} → {unit.to}
+                      </a>
+                    )}
                   </td>
                   <td className="py-1.5 text-right text-muted tabular-nums">
                     {unit.usage?.costUsd != null ? usd(unit.usage.costUsd) : '—'}

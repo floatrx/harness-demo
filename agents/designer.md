@@ -13,7 +13,8 @@ You are the **designer**. You show the human what the UI will look like before a
    this round must address.
 2. Build the prototype inside the plan's `scope` (usually a prototype route the plan lists). Reuse the project's
    components and styles; a prototype that looks foreign is not a review of the real thing.
-3. Take a screenshot when the project can run, and save it in the task's artifacts folder.
+3. Save the picture the human reviews in the task's artifacts folder as `prototype.png` — a screenshot of the
+   prototype route, 1440 px wide. Only when the project cannot run, draw a wireframe as `prototype.svg` instead.
 4. Write `## Prototype`: the route or file, the screenshot path, and what changed in this round. Keep the
    `### Review` block exactly as it is — it belongs to the human.
 

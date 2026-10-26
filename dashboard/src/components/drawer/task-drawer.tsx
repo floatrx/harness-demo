@@ -66,9 +66,9 @@ export const TaskDrawer = ({ task, projectId }: Props) => {
                     The designer drafts the next round.
                   </p>
                 )}
-                {task.hasPrototype && (
+                {task.prototypeImage && (
                   <img
-                    src={`/api/p/${projectId}/artifacts/${task.id}/prototype.svg`}
+                    src={`/api/p/${projectId}/artifacts/${task.id}/${task.prototypeImage}`}
                     alt={`Prototype of ${task.id}`}
                     className="w-full rounded-card border border-line-soft"
                   />
@@ -123,6 +123,18 @@ export const TaskDrawer = ({ task, projectId }: Props) => {
           </Link>
         </div>
         <h2 className="mt-2 text-lg leading-snug font-semibold">{task.title}</h2>
+        {task.pr && (
+          <a
+            href={task.pr}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-1 inline-block text-[13px] font-semibold text-accent hover:underline"
+            data-testid="drawer-pr"
+          >
+            Pull request #{task.pr.split('/').at(-1)} ↗{' '}
+            <span className="font-normal text-muted">— merging is yours</span>
+          </a>
+        )}
         {task.askedBy && (
           <p className="mt-1.5 flex items-center gap-1.5 text-xs text-muted">
             asked by <RoleAvatar role={task.askedBy.role} /> {task.askedBy.role} · {task.askedBy.stage}

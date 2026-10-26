@@ -190,6 +190,28 @@ export default async function AgentsPage({ params, searchParams }: Props) {
               </p>
             )}
             <dl className="grid grid-cols-[110px_minmax(0,1fr)] gap-y-1.5 text-[12.5px]">
+              <dt className="text-muted">Delivery</dt>
+              <dd data-testid="outbound-delivery">
+                {page.outbound.pr ? (
+                  <>
+                    pull request to <Code>{page.outbound.remote}</Code> via <Code>gh</Code> · never merged
+                  </>
+                ) : (
+                  <span className="text-muted">off — done is the end (deliver.pr)</span>
+                )}
+              </dd>
+              <dt className="text-muted">Telegram</dt>
+              <dd data-testid="outbound-telegram">
+                {page.outbound.telegram ? (
+                  <>
+                    on · keys from <Code>{page.outbound.telegram}</Code>
+                  </>
+                ) : (
+                  <span className="text-muted">
+                    off — set <Code>TELEGRAM_BOT_TOKEN</Code> and <Code>TELEGRAM_CHAT_ID</Code> in <Code>~/.harness/.env</Code>
+                  </span>
+                )}
+              </dd>
               <dt className="text-muted">Permission mode</dt>
               <dd>
                 <Code>{page.invocation.permissionMode}</Code>

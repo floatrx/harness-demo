@@ -1,7 +1,7 @@
 // A throwaway project for loop tests: a git repo in a temp folder with a bare `origin`, `.harness/`
 // initialised, nothing shared with the repository the tests run from.
 
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,13 +15,16 @@ import { createTask } from '../task/write.ts';
 import type { Scenario } from './fake-agent.ts';
 
 export const FAKE_AGENT = fileURLToPath(new URL('./fake-agent.ts', import.meta.url));
+export const FAKE_GH = fileURLToPath(new URL('./fake-gh.ts', import.meta.url));
 
 export interface Sandbox {
   root: string;
   project: string;
   scenarioPath: string;
-  /** Agent options for runUnit / supervise. */
-  agent: { agentCommand: string; env: Record<string, string> };
+  /** Agent options for runUnit / supervise; `gh` is the fake GitHub CLI (delivery). */
+  agent: { agentCommand: string; env: Record<string, string>; gh: string };
+  /** Every fake `gh` call so far, argv per call. */
+  ghCalls(): string[][];
   scenario(value: Scenario): void;
   task(id: string): LoadedTask;
   taskPath(id: string): string;
@@ -52,19 +55,33 @@ export function makeSandbox(config: Record<string, unknown> = {}): Sandbox {
   writeFileSync(join(project, 'README.md'), '# sandbox\n');
   writeFileSync(join(project, 'src', 'app.txt'), 'app\n');
   initProject(project, { supervisor: FAST_SUPERVISOR, ...config });
+  // An empty token switches Telegram off here, whatever ~/.harness/.env holds: a test never pings a real chat.
+  writeFileSync(join(project, '.env'), 'TELEGRAM_BOT_TOKEN=\n');
   git(project, ['add', 'README.md', 'src', '.gitignore']);
   git(project, ['commit', '--quiet', '-m', 'init']);
   git(project, ['remote', 'add', 'origin', origin]);
   git(project, ['push', '--quiet', '-u', 'origin', 'main']);
 
   const scenarioPath = join(root, 'scenario.json');
+  const ghLog = join(root, 'gh.log');
   writeFileSync(scenarioPath, '{}');
   const taskPath = (id: string) => join(tracePaths(project).tasks, `${id}.md`);
   return {
     root,
     project,
     scenarioPath,
-    agent: { agentCommand: `node ${JSON.stringify(FAKE_AGENT)}`, env: { HARNESS_FAKE_SCENARIO: scenarioPath } },
+    agent: {
+      agentCommand: `node ${JSON.stringify(FAKE_AGENT)}`,
+      env: { HARNESS_FAKE_SCENARIO: scenarioPath },
+      gh: `HARNESS_FAKE_GH_LOG=${JSON.stringify(ghLog)} node ${JSON.stringify(FAKE_GH)}`,
+    },
+    ghCalls: () =>
+      existsSync(ghLog)
+        ? readFileSync(ghLog, 'utf8')
+            .split('\n')
+            .filter(Boolean)
+            .map((line) => JSON.parse(line) as string[])
+        : [],
     scenario: (value) => writeFileSync(scenarioPath, JSON.stringify(value, null, 2)),
     task: (id) => loadTask(taskPath(id)),
     taskPath,

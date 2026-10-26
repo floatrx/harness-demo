@@ -46,6 +46,9 @@ export class ProjectError extends Error {
  */
 export const IGNORED = ['.harness/trace/', '.harness/artifacts/', '.harness/tasks/', '.harness/JOURNAL.md'];
 
+/** Secrets: the loop reads Telegram keys from `<project>/.env`, so that file must never be committed. */
+export const SECRET_IGNORES = ['.env'];
+
 /** Creates `.harness/` with a default config. Idempotent: an existing config is kept. */
 export function initProject(path: string, overrides: Record<string, unknown> = {}): void {
   const dir = harnessDir(path);
@@ -62,7 +65,7 @@ export function initProject(path: string, overrides: Record<string, unknown> = {
   if (!existsSync(journal)) writeFileSync(journal, '# Journal\n\nNotes agents leave for the next unit.\n');
   const gitignore = join(path, '.gitignore');
   const current = existsSync(gitignore) ? readFileSync(gitignore, 'utf8') : '';
-  const missing = IGNORED.filter((line) => !current.split('\n').includes(line));
+  const missing = [...IGNORED, ...SECRET_IGNORES].filter((line) => !current.split('\n').includes(line));
   if (missing.length)
     appendFileSync(gitignore, `${current && !current.endsWith('\n') ? '\n' : ''}${missing.join('\n')}\n`);
 }
@@ -100,6 +103,9 @@ export function resolveProject(ref: string | undefined): string {
     if (byRegistry) return byRegistry.path;
   }
   const abs = resolve(ref ?? '.');
-  if (!existsSync(join(abs, '.harness'))) throw new ProjectError(`${abs} is not a harness project (no .harness/)`);
+  // The config, not the folder: `~/.harness/` is also the registry home, so a bare `.harness/` would make the home
+  // directory look like a project.
+  if (!existsSync(join(abs, '.harness', 'config.json')))
+    throw new ProjectError(`${abs} is not a harness project (no .harness/config.json)`);
   return abs;
 }

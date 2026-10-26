@@ -8,7 +8,7 @@ over task files in a project's `.harness/tasks/`. Code-owned contracts check eve
 | What | Command |
 |---|---|
 | Install | `pnpm install` (pnpm only — never npm or yarn) |
-| Typecheck | `pnpm -r exec tsc -b` |
+| Typecheck | `pnpm typecheck` (= `pnpm -r exec tsc -b --force`: the dashboard's incremental build does not see changes in `harness/`, so a plain `-b` can report green on a broken dashboard) |
 | Lint | `pnpm lint` |
 | Tests | `node --test harness/ dashboard/` (core + dashboard route handlers) |
 | Contract self-test | `node harness/bin/harness.ts self-test` |
@@ -20,6 +20,8 @@ over task files in a project's `.harness/tasks/`. Code-owned contracts check eve
 | Demo data for the dashboard | `HARNESS_HOME=/tmp/h/home pnpm dashboard:seed /tmp/h/bookmarks` (fake agent, zero tokens) |
 | Live demo, zero tokens | start the dashboard with `AGENT_CMD="node $PWD/harness/testkit/fake-agent.ts"` (and optionally `HARNESS_FAKE_SCENARIO`) — the supervisor it starts inherits both |
 | Dashboard walkthrough (e2e + screenshots) | `pnpm -C dashboard build && pnpm dashboard:e2e` (`--docs` rewrites `docs/screenshots/`; system Chrome) |
+| Telegram notifications | `node harness/bin/harness.ts notify [--test]` — keys from env → `<project>/.env` → `~/.harness/.env`; an empty `TELEGRAM_BOT_TOKEN` switches them off (tests and the e2e do) |
+| Delivery (`deliver.pr: true`) | the runner pushes the task branch and runs `gh pr create`, never merge; `HARNESS_GH` replaces `gh` (tests: `harness/testkit/fake-gh.ts`) |
 
 Node 26 is required (`.nvmrc`). It runs the TypeScript in `harness/` directly by type stripping — there is no build.
 

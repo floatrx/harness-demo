@@ -8,6 +8,18 @@ import type { Role } from './task/write.ts';
 export const UNIT_STAGES = ['spec', 'plan', 'prototype', 'implement', 'qa', 'judge'] as const;
 export type UnitStage = (typeof UNIT_STAGES)[number];
 
+/** What the loop tells the human on Telegram: what needs them, and what ended. */
+export const NOTIFY_EVENTS = [
+  'needs-input',
+  'planned',
+  'prototype',
+  'parked',
+  'done',
+  'delivered',
+  'supervisor',
+] as const;
+export type NotifyEvent = (typeof NOTIFY_EVENTS)[number];
+
 export interface VerdictRule {
   /** The token prefix the stage must print, e.g. `qa` for `qa: PASS`. */
   token: string;
@@ -29,7 +41,10 @@ export interface HarnessConfig {
   probe: string | null;
   /** Required verdict per stage. A unit of that stage without the token fails the trace contract. */
   verdicts: Partial<Record<UnitStage, VerdictRule>>;
-  deliver: { pr: boolean };
+  /** `pr: true` → a done task's branch is pushed to `remote` and a pull request is opened. Nothing ever merges it. */
+  deliver: { pr: boolean; remote: string };
+  /** Telegram events to send (keys in env or `.env`; none → silent). */
+  notify: { events: NotifyEvent[] };
   agent: {
     /** A shell command that replaces `claude` (the fake agent, a wrapper). null = the built-in `claude -p`. */
     command: string | null;
@@ -63,7 +78,6 @@ export const DEFAULT_CONFIG: HarnessConfig = {
       qa: 'sonnet',
       // The judge is a different model from the implementer and the tester on purpose.
       judge: 'opus',
-      delivery: 'haiku',
     },
   },
   limits: { bounces: 2, prototypeRounds: 3, unitTimeoutMinutes: 60 },
@@ -73,7 +87,8 @@ export const DEFAULT_CONFIG: HarnessConfig = {
     qa: { token: 'qa', values: ['PASS', 'FAIL', 'CANNOT_VERIFY'] },
     judge: { token: 'judge', values: ['CONFIRMED', 'REJECTED'] },
   },
-  deliver: { pr: false },
+  deliver: { pr: false, remote: 'origin' },
+  notify: { events: [...NOTIFY_EVENTS] },
   agent: {
     command: null,
     permissionMode: 'dontAsk',
@@ -139,6 +154,9 @@ export function loadConfig(project: string): HarnessConfig {
   const config = merge(DEFAULT_CONFIG, raw);
   if (!['gated', 'full'].includes(config.autonomy.mode)) throw new ConfigError(`autonomy.mode: gated | full`);
   if (!(config.limits.bounces >= 1)) throw new ConfigError('limits.bounces must be ≥ 1');
+  const unknown = config.notify.events.filter((event) => !(NOTIFY_EVENTS as readonly string[]).includes(event));
+  if (unknown.length)
+    throw new ConfigError(`notify.events: unknown ${unknown.join(', ')} (${NOTIFY_EVENTS.join(' | ')})`);
   return config;
 }
 
@@ -147,6 +165,7 @@ export function transitionContext(config: HarnessConfig): TransitionContext {
     autonomy: config.autonomy.mode,
     mergeQaJudge: config.roles.mergeQaJudge,
     bounceCap: config.limits.bounces,
+    deliverPr: config.deliver.pr,
   };
 }
 

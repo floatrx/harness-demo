@@ -2,7 +2,7 @@
    statuses, transitions, parsing and the queue all come from @harness/core. */
 
 import { existsSync, readFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename } from 'node:path';
 import { loadConfig, transitionContext } from '@harness/core/config';
 import { readRunning, tracePaths } from '@harness/core/paths';
 import { type Project, listProjects } from '@harness/core/projects';
@@ -19,6 +19,7 @@ import {
 import { validateTask } from '@harness/core/task/validate';
 import type { UnitUsage } from '@harness/core/contracts/trace';
 import { prototypeRounds } from '@harness/core/task/write';
+import { prototypeImage } from './prototype-image.ts';
 
 export const STAGE_ROLE: Partial<Record<Status, string>> = {
   spec: 'writer',
@@ -42,6 +43,8 @@ export interface Handoff {
   verdict?: string | null;
   /** From the unit's stream-json result (`readUsage`); null when the agent printed none (the fake agent's plain text). */
   usage?: Partial<UnitUsage> | null;
+  /** A deliver step: the pull request it opened. */
+  pr?: string;
 }
 
 export interface CardModel {
@@ -59,7 +62,10 @@ export interface CardModel {
   isBad: boolean;
   /** Where the track stops: a parked task shows where it was parked from. */
   trackStatus: Status;
-  hasPrototype: boolean;
+  /** The prototype picture in `artifacts/<id>/` (file name), if the designer left one. */
+  prototypeImage: string | null;
+  /** The pull request the runner opened (`deliver.pr`). */
+  pr: string | null;
   working: { role: string; since: string; unit: number } | null;
   /** Not running now, but the next thing that happens to it is an agent unit (or the runner's advance). */
   agentNext: boolean;
@@ -134,6 +140,7 @@ function cardMeta(
   handoffs: Handoff[],
   cap: number,
   rounds: number,
+  deliverPr: boolean,
 ): Pick<CardModel, 'meta' | 'action' | 'owner'> {
   const { fields, doc } = task;
   const role = STAGE_ROLE[fields.status] ?? null;
@@ -178,10 +185,12 @@ function cardMeta(
     case 'done':
     case 'delivered': {
       const commit = [...mine].reverse().find((handoff) => handoff.commit)?.commit;
+      /* A done task with delivery on still has one runner step: the pull request. */
+      const next = fields.status === 'done' && deliverPr ? 'PR next' : null;
       return {
         owner: null,
         action: null,
-        meta: [commit?.slice(0, 7), cost ? usd(cost) : null].filter(Boolean).join(' · ') || 'Done',
+        meta: [commit?.slice(0, 7), cost ? usd(cost) : null, next].filter(Boolean).join(' · ') || 'Done',
       };
     }
     default:
@@ -229,14 +238,19 @@ export function loadBoard(id: string): BoardModel {
       title: fields.title,
       status: fields.status,
       kind: fields.kind,
-      ...cardMeta(task, handoffs, config.limits.bounces, prototypeRounds(task.doc)),
+      ...cardMeta(task, handoffs, config.limits.bounces, prototypeRounds(task.doc), ctx.deliverPr),
       bounces: fields.bounces,
       bounceCap: config.limits.bounces,
       isBad: fields.status === 'parked',
       trackStatus: fields.status === 'parked' ? (fields.parkedFrom ?? 'parked') : fields.status,
-      hasPrototype: existsSync(join(paths.artifacts, fields.id, 'prototype.svg')),
+      prototypeImage: prototypeImage(paths.artifacts, fields.id),
+      pr: fields.pr,
       working: isRunning && running ? { role: running.role, since: running.startedAt, unit: running.unit } : null,
-      agentNext: !isRunning && (!!stageFor(fields) || (fields.status === 'needs-input' && fields.openQuestions === 0)),
+      agentNext:
+        !isRunning &&
+        (!!stageFor(fields) ||
+          (fields.status === 'needs-input' && fields.openQuestions === 0) ||
+          (fields.status === 'done' && ctx.deliverPr)),
       issues,
       moves: isRunning ? [] : dragMoves(fields, ctx),
     };
@@ -252,7 +266,9 @@ export function loadBoard(id: string): BoardModel {
     ? null
     : step.kind === 'advance'
       ? `${step.task.id} · ${step.task.status} → ${step.target}`
-      : `${step.task.id} · ${stageFor(step.task) ?? step.stage}`;
+      : step.kind === 'deliver'
+        ? `${step.task.id} · pull request`
+        : `${step.task.id} · ${stageFor(step.task) ?? step.stage}`;
   const holder = lockHolder(project.path);
   const todays = handoffs.filter((handoff) => isToday(handoff.at) && handoff.stage !== 'advance');
 

@@ -216,7 +216,7 @@ describe('transitions', () => {
   test('planned goes to prototype for ui, ready otherwise; full autonomy skips the human', () => {
     assert.deepEqual(humanTargets({ ...base, status: 'planned' }), ['ready']);
     assert.deepEqual(humanTargets({ ...base, status: 'planned', kind: 'ui' }), ['prototype']);
-    const ctx = { autonomy: 'full' as const, mergeQaJudge: false, bounceCap: 2 };
+    const ctx = { autonomy: 'full' as const, mergeQaJudge: false, bounceCap: 2, deliverPr: false };
     assert.equal(findTransition({ ...base, status: 'planned' }, 'agent', 'auto-approve')?.target, undefined);
     assert.equal(findTransition({ ...base, status: 'planned' }, 'agent', 'auto-approve', ctx)?.target, 'ready');
   });

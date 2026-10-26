@@ -65,9 +65,16 @@ export interface TransitionContext {
   autonomy: 'gated' | 'full';
   mergeQaJudge: boolean;
   bounceCap: number;
+  /** `deliver.pr`: a done task still has a runner step (push + pull request) before `delivered`. */
+  deliverPr: boolean;
 }
 
-export const DEFAULT_CONTEXT: TransitionContext = { autonomy: 'gated', mergeQaJudge: false, bounceCap: 2 };
+export const DEFAULT_CONTEXT: TransitionContext = {
+  autonomy: 'gated',
+  mergeQaJudge: false,
+  bounceCap: 2,
+  deliverPr: false,
+};
 
 export interface Transition {
   /** A stable name: the CLI command or the runner event that fires it. */

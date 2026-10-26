@@ -13,6 +13,7 @@ import {
 } from '@harness/core/agents';
 import { type HarnessConfig, STAGE_ROLE, UNIT_STAGES, type UnitStage, loadConfig } from '@harness/core/config';
 import { REPO_ROOT } from '@harness/core/example';
+import { telegramKeys } from '@harness/core/notify';
 import { invocation, stageSpecialists } from '@harness/core/runner';
 import { findProject } from './board.ts';
 
@@ -47,6 +48,8 @@ export interface AgentsPage {
     allowedTools: string[];
   };
   rulesFile: string;
+  /** `deliver.pr` and where it pushes; Telegram on/off and where its keys come from (never the keys). */
+  outbound: { pr: boolean; remote: string; telegram: string | null };
 }
 
 /* Anywhere in the string: the stand-in command starts with `node `, the path comes after. */
@@ -90,5 +93,10 @@ export function loadAgentsPage(projectId: string): AgentsPage {
       allowedTools: config.agent.allowedTools,
     },
     rulesFile: relative(REPO_ROOT, STANDING_RULES_PATH),
+    outbound: {
+      pr: config.deliver.pr,
+      remote: config.deliver.remote,
+      telegram: telegramKeys(project.path)?.source.replace(homedir(), '~') ?? null,
+    },
   };
 }

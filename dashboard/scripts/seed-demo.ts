@@ -12,6 +12,7 @@ import { loadTask, nextTaskId, saveTask } from '@harness/core/task/task';
 import { type NewTask, approve, createTask, submit } from '@harness/core/task/write';
 
 const dest = process.argv[2];
+process.env.TELEGRAM_BOT_TOKEN = ''; // the seed drives ~20 units: never ping the real chat
 if (!dest) throw new Error('usage: node dashboard/scripts/seed-demo.ts <dest>');
 const FAKE = fileURLToPath(new URL('../../harness/testkit/fake-agent.ts', import.meta.url));
 

@@ -11,10 +11,10 @@
     "harness": "node harness/bin/harness.ts",
     "test": "node --test harness/ dashboard/",
     "self-test": "node harness/bin/harness.ts self-test",
-    "typecheck": "pnpm -r exec tsc -b",
+    "typecheck": "pnpm -r exec tsc -b --force",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "provenance": "! rg -i 'mgea[r]|bserve[d]|gotenber[g]|FB-[0-9]' --glob '!.work' --glob '!node_modules' .",
+    "provenance": "! rg -i 'mgea[r]|bserve[d]|gotenber[g]|FB-[0-9]' --glob '!.work' --glob '!node_modules' . && ! rg -n '[0-9]{8,10}:[A-Za-z0-9_-]{30,}|gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,}|sk-an[t]-[A-Za-z0-9_-]{20,}' --glob '!.work' --glob '!node_modules' .",
     "dashboard": "pnpm -C dashboard dev",
     "dashboard:seed": "node dashboard/scripts/seed-demo.ts",
     "dashboard:e2e": "node dashboard/e2e/walkthrough.ts"

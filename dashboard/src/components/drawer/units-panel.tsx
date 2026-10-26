@@ -12,7 +12,7 @@ export const UnitsPanel = ({ units }: Props) =>
         {[...units].reverse().map((unit) => (
           <tr key={`${unit.unit}-${unit.at}`} className="border-b border-line-soft">
             <td className="py-1.5 text-muted tabular-nums">{clock(unit.at)}</td>
-            <td className="py-1.5 tabular-nums">unit {unit.unit}</td>
+            <td className="py-1.5 tabular-nums">{unit.unit != null ? `unit ${unit.unit}` : 'runner'}</td>
             <td className="py-1.5">{unit.stage}</td>
             <td className="py-1.5">
               {unit.from} → {unit.to}

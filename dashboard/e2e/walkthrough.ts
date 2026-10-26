@@ -246,6 +246,7 @@ const server: ChildProcess = spawn(process.execPath, [nextBin, 'start', '-H', '1
     HARNESS_HOME: home,
     AGENT_CMD: `node ${JSON.stringify(FAKE)}`,
     HARNESS_FAKE_SCENARIO: scenario,
+    TELEGRAM_BOT_TOKEN: '', // a walkthrough never pings the real chat
   },
 });
 say(`dashboard pid ${server.pid} on ${base} (log ${serverLog})`);

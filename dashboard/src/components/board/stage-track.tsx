@@ -11,7 +11,8 @@ interface Props {
 }
 
 export const StageTrack = ({ status, isBad, className }: Props) => {
-  const at = TRACK.indexOf(status);
+  /* Delivered is past the end of the pipeline: the whole track is walked, done is the last lit segment. */
+  const at = status === 'delivered' ? TRACK.length - 1 : TRACK.indexOf(status);
   return (
     <div className={cn('flex gap-0.5', className)} aria-label={`stage ${status}`}>
       {TRACK.map((stage, index) => (

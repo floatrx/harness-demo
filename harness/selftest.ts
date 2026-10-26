@@ -429,6 +429,52 @@ export const CASES: Case[] = [
       }),
   },
   {
+    name: 'deliver: done → delivered through one pull request; the branch is on origin; nothing merges',
+    run: () =>
+      withSandbox({ autonomy: { mode: 'full' }, deliver: { pr: true } }, async (sandbox) => {
+        const id = seedTask(sandbox, READY);
+        const result = await supervise(sandbox.project, { ...sandbox.agent, onceThrough: true });
+        const task = sandbox.task(id).fields;
+        expect(result.exit === 0, `supervisor exit ${result.exit}: ${result.reason}`);
+        expect(task.status === 'delivered', `status ${task.status} (${task.parked ?? ''})`);
+        expect(/\/pull\/1$/.test(task.pr ?? ''), `pr field "${task.pr}"`);
+        const remote = sandbox.git(['ls-remote', '--heads', 'origin', task.branch ?? '?']).trim();
+        expect(remote.length > 0, `${task.branch} is not on origin`);
+        const verbs = sandbox.ghCalls().map((call) => call.slice(0, 2).join(' '));
+        expect(verbs.filter((verb) => verb === 'pr create').length === 1, `gh calls: ${verbs.join(', ')}`);
+        expect(!verbs.some((verb) => /merge|close|review/.test(verb)), `gh was asked to ${verbs.join(', ')}`);
+        const body = readFileSync(join(sandbox.project, '.harness/artifacts', id, 'pr-body.md'), 'utf8');
+        expect(
+          /✓ `test -f src\/feature\.txt`/.test(body) && /agent: stand-in/.test(body),
+          'pr body misses a criterion',
+        );
+        return `delivered · ${task.pr} · gh: ${verbs.join(', ')}`;
+      }),
+  },
+  {
+    name: 'deliver: a commit the runner did not make parks the task and nothing is pushed',
+    run: () =>
+      withSandbox({ autonomy: { mode: 'full' }, deliver: { pr: true } }, async (sandbox) => {
+        const id = seedTask(sandbox, READY);
+        await supervise(sandbox.project, { ...sandbox.agent, onceThrough: true, maxUnits: 3 });
+        const done = sandbox.task(id).fields;
+        expect(done.status === 'done', `status ${done.status}, expected done after implement · qa · judge`);
+        sandbox.git(['checkout', '--quiet', done.branch ?? '?']);
+        writeFileSync(join(sandbox.project, 'src', 'hand.txt'), 'by hand\n');
+        sandbox.git(['add', 'src/hand.txt']);
+        sandbox.git(['commit', '--quiet', '-m', 'tweak by hand']);
+        sandbox.git(['checkout', '--quiet', 'main']);
+        const result = await runUnit(sandbox.project, sandbox.agent);
+        const task = sandbox.task(id).fields;
+        expect(result.exit === 1 && task.status === 'parked', `exit ${result.exit}, status ${task.status}`);
+        expect(/commits the runner did not make/.test(task.parked ?? ''), `parked "${task.parked}"`);
+        expect(task.parkedFrom === 'done', `parkedFrom ${task.parkedFrom}`);
+        const remote = sandbox.git(['ls-remote', '--heads', 'origin', done.branch ?? '?']).trim();
+        expect(remote === '', 'the branch was pushed');
+        return `parked · ${task.parked}`;
+      }),
+  },
+  {
     name: 'supervisor: one loop per checkout (lock)',
     run: () =>
       withSandbox({}, async (sandbox) => {

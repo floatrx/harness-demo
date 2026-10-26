@@ -6,7 +6,7 @@
 //   3 nothing left to take · 4 the agent could not run (usage limit, network, login, probe)
 
 import { spawn } from 'node:child_process';
-import { createWriteStream, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createWriteStream, existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -31,6 +31,8 @@ import {
   writeAgentsFile,
 } from './agents.ts';
 import { buildMemory } from './memory.ts';
+import { deliverTask } from './deliver.ts';
+import { noticeFor, notify } from './notify.ts';
 import { branchExists, currentBranch, dirty, git, head, sh } from './git.ts';
 import {
   type TracePaths,
@@ -63,7 +65,7 @@ export interface UnitResult {
   exit: ExitCode;
   message: string;
   task?: string;
-  stage?: UnitStage | 'advance';
+  stage?: UnitStage | 'advance' | 'deliver';
   from?: Status;
   to?: Status;
   unit?: number;
@@ -77,6 +79,8 @@ export interface RunOptions {
   agentCommand?: string;
   /** Extra environment for the agent (the fake agent's scenario path, for one). */
   env?: Record<string, string>;
+  /** Replaces `gh` for delivery (tests). Env `HARNESS_GH` does too. */
+  gh?: string;
   log?: (line: string) => void;
 }
 
@@ -145,6 +149,26 @@ function alive(pid: number): boolean {
 // ---------------------------------------------------------------------------
 
 export async function runUnit(project: string, options: RunOptions = {}): Promise<UnitResult> {
+  const result = await runStep(project, options);
+  if (result.task && result.moved) await notifyAfter(project, result);
+  return result;
+}
+
+/** Tells the human what the step left them (notify.ts). A notification never fails or delays a unit beyond 5 s. */
+async function notifyAfter(project: string, result: UnitResult): Promise<void> {
+  try {
+    const config = loadConfig(project);
+    const paths = tracePaths(project);
+    const file = join(paths.tasks, `${result.task}.md`);
+    if (!existsSync(file)) return;
+    const notice = noticeFor(loadTask(file).fields, result.from, config);
+    if (notice) await notify(project, config, paths, notice);
+  } catch {
+    // The unit's outcome is already recorded; a broken config or task file shows up in the next step instead.
+  }
+}
+
+async function runStep(project: string, options: RunOptions): Promise<UnitResult> {
   const paths = tracePaths(project);
   ensureTrace(paths);
   const say = (line: string) => {
@@ -220,6 +244,7 @@ export async function runUnit(project: string, options: RunOptions = {}): Promis
 
   const task = loaded.find((item) => item.fields.id === step.task.id) as LoadedTask;
   if (step.kind === 'advance') return advance(project, paths, task, step.action, step.target, say);
+  if (step.kind === 'deliver') return deliver(project, paths, config, task, options, say);
   return agentUnit(project, paths, config, registry, task, step.stage, options, say);
 }
 
@@ -245,6 +270,39 @@ function advance(
     stage: 'advance',
     from: fields.status,
     to: target,
+    moved: true,
+  };
+}
+
+/** Any picture a prototype round left in its artifacts folder (the dashboard shows prototype.png first). */
+function hasImage(dir: string): boolean {
+  return existsSync(dir) && readdirSync(dir).some((name) => /\.(png|webp|jpe?g|svg)$/i.test(name));
+}
+
+/** `deliver.pr`: push the done task's branch and open its pull request (harness/deliver.ts). */
+function deliver(
+  project: string,
+  paths: TracePaths,
+  config: HarnessConfig,
+  task: LoadedTask,
+  options: RunOptions,
+  say: (line: string) => void,
+): UnitResult {
+  const id = task.fields.id;
+  const standIn = options.agentCommand ?? process.env.AGENT_CMD ?? config.agent.command;
+  const result = deliverTask(project, paths, config, task, {
+    agent: standIn ? 'stand-in' : 'claude',
+    ...(options.gh ? { gh: options.gh } : {}),
+  });
+  const to = result.ok ? 'delivered' : 'parked';
+  say(`${id} done → ${to} (deliver)${result.ok ? ` · ${result.pr}` : ` · ${result.reason}`}`);
+  return {
+    exit: result.ok ? EXIT.done : EXIT.hardStop,
+    message: result.ok ? `pull request ${result.pr}` : (result.reason ?? 'delivery failed'),
+    task: id,
+    stage: 'deliver',
+    from: 'done',
+    to,
     moved: true,
   };
 }
@@ -456,6 +514,8 @@ async function agentUnit(
       if (scope.changed.length) commit = commitUnit(project, scope.changed, `${id}: ${task.fields.title} (prototype)`);
       setField(doc, 'prototype', 'review');
       appendLog(doc, `prototype drafting → review · ${who}`);
+      // Not a hard stop — a route alone is reviewable — but the human should know why the dashboard shows no picture.
+      if (!hasImage(join(project, artifacts))) appendLog(doc, `  ↳ no image in ${artifacts}/ — review the route`);
       target = 'prototype';
       break;
     }

@@ -1,6 +1,5 @@
 /* Server-only: everything the task drawer shows, as plain serialisable data. */
 
-import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadConfig } from '@harness/core/config';
 import { tracePaths } from '@harness/core/paths';
@@ -9,6 +8,7 @@ import { type Question, getSection, parseCriteria, parseQuestions } from '@harne
 import { loadTask } from '@harness/core/task/task';
 import type { Status } from '@harness/core/task/transitions';
 import { type Handoff, STAGE_ROLE, findProject, readHandoffs } from './board.ts';
+import { prototypeImage } from './prototype-image.ts';
 
 export interface TaskDetail {
   id: string;
@@ -16,7 +16,8 @@ export interface TaskDetail {
   status: Status;
   trackStatus: Status;
   kind: string | null;
-  hasPrototype: boolean;
+  /** The prototype picture in `artifacts/<id>/` (file name), if the designer left one. */
+  prototypeImage: string | null;
   /** Prototype review state and the comment budget left (limits.prototypeRounds). */
   prototype: { state: 'drafting' | 'review' | null; roundsLeft: number };
   askedBy: { role: string; stage: string; unit: number | null; costUsd: number | null } | null;
@@ -25,6 +26,8 @@ export interface TaskDetail {
   criteria: ReturnType<typeof parseCriteria>;
   log: string[];
   units: Handoff[];
+  /** The pull request the runner opened (`deliver.pr`). */
+  pr: string | null;
 }
 
 const SECTIONS = ['Draft', 'Spec', 'Plan', 'Prototype', 'Acceptance criteria'] as const;
@@ -50,7 +53,7 @@ export function loadTaskDetail(projectId: string, taskId: string): TaskDetail | 
     status: fields.status,
     trackStatus: fields.status === 'parked' ? (fields.parkedFrom ?? 'parked') : fields.status,
     kind: fields.kind,
-    hasPrototype: existsSync(join(tracePaths(project.path).artifacts, taskId, 'prototype.svg')),
+    prototypeImage: prototypeImage(tracePaths(project.path).artifacts, taskId),
     prototype: {
       state: fields.prototype,
       roundsLeft: Math.max(0, loadConfig(project.path).limits.prototypeRounds - prototypeRounds(doc)),
@@ -71,5 +74,6 @@ export function loadTaskDetail(projectId: string, taskId: string): TaskDetail | 
     criteria: parseCriteria(getSection(doc, 'Acceptance criteria')),
     log: (getSection(doc, 'Log') ?? '').split('\n').filter((line) => line.trim()),
     units,
+    pr: fields.pr,
   };
 }
