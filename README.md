@@ -14,7 +14,8 @@ checks**, not by instructions the agent may ignore.
 - **Delivery** — the runner pushes the task branch and opens the pull request. Nothing ever merges it.
 - **Telegram** — optional one-way pings when the loop needs you or finishes something.
 
-A walkthrough with screenshots of every step lives in [floatrx/harness-info](https://github.com/floatrx/harness-info);
+A walkthrough with screenshots of every step lives at [harness-info.vercel.app](https://harness-info.vercel.app/en)
+(source: [floatrx/harness-info](https://github.com/floatrx/harness-info));
 a live demo project with pull requests opened by the loop is
 [floatrx/harness-demo-bookmarks](https://github.com/floatrx/harness-demo-bookmarks). How it works inside:
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
