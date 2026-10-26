@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { loadConfig } from './config.ts';
-import { deliveryPreflight } from './deliver.ts';
+import { deliveryPreflight, prBody } from './deliver.ts';
 import { runUnit } from './runner.ts';
 import { scrubSecrets } from './secrets.ts';
 import { supervise } from './supervise.ts';
@@ -147,4 +147,44 @@ test('scrubSecrets removes token shapes and known live values', () => {
   assert.equal(scrubSecrets(`a ${TOKEN} b`), 'a [secret] b');
   assert.equal(scrubSecrets('chat 12345678 key hunter2-long', ['hunter2-long']), 'chat 12345678 key [secret]');
   assert.equal(scrubSecrets('plain text'), 'plain text');
+});
+
+test("the PR marks the [found] criteria QA walked in the browser; the rest stay the reviewer's (pilot lesson 13)", () => {
+  const sandbox = makeSandbox();
+  try {
+    const id = seedTask(sandbox, READY);
+    const loaded = loadTask(sandbox.taskPath(id));
+    putSection(
+      loaded.doc,
+      'Acceptance criteria',
+      normalizeBody(
+        [
+          '1. [closes] The file exists: `test -f src/feature.txt`',
+          '2. [found] Removing shows a toast with Undo.',
+          '3. [found] A screen reader announces the toast.',
+          '4. [process] The reviewer checks the old behaviour.',
+        ].join('\n'),
+      ),
+    );
+    saveTask(loaded.path, loaded.doc);
+    const report = [
+      '# QA',
+      '- 1 PASS · command · -',
+      '- 2 PASS · browser · qa-2-toast.png',
+      '- 3 REVIEWER · code · -',
+      'Details: …',
+    ].join('\n');
+    const body = prBody(loadTask(sandbox.taskPath(id)), [], [], 'claude', report);
+    assert.match(
+      body,
+      /- ✓ \[found\] Removing shows a toast with Undo\. — walked in the browser by QA \(`qa-2-toast\.png`\)/,
+    );
+    assert.match(body, /- \[ \] \[found\] A screen reader announces the toast\. — for a human to check/);
+    assert.match(body, /- \[ \] \[process\] The reviewer checks the old behaviour\. — for a human to check/);
+    assert.match(body, /_QA walked 1 `\[found\]` criterion in a browser on the running app/);
+    const plain = prBody(loadTask(sandbox.taskPath(id)), [], [], 'claude');
+    assert.ok(!plain.includes('walked in the browser'), 'no report, no ✓ for [found]');
+  } finally {
+    sandbox.cleanup();
+  }
 });

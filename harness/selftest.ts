@@ -394,7 +394,7 @@ export const CASES: Case[] = [
         const { result, seen } = await qaUnit(sandbox, [PROBE_APP, { say: 'qa: PASS' }]);
         expect(result.exit === 0 && result.stage === 'qa', `qa unit exit ${result.exit}: ${result.message}`);
         const [url, mcp, page] = seen.split('\n');
-        expect(/^http:\/\/127\.0\.0\.1:\d+$/.test(url ?? '') && /fake app/.test(page ?? ''), `the unit saw: ${seen}`);
+        expect(/^http:\/\/localhost:\d+$/.test(url ?? '') && /fake app/.test(page ?? ''), `the unit saw: ${seen}`);
         // B2: the browser comes with the app — one MCP server, Playwright, screenshots into the artifacts folder.
         const server = (JSON.parse(readFileSync(mcp ?? '', 'utf8')) as McpFile).mcpServers.playwright;
         expect(

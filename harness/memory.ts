@@ -15,17 +15,30 @@ const BOARD_TASKS = 30;
 
 /** The other tasks on the board, for the stages that decide what a task is (pilot lesson 6: a vague draft's
  *  recommended option was exactly what another open task already did). */
-function otherTasks(paths: TracePaths, id: string): string[] {
+function otherTasks(project: string, paths: TracePaths, id: string, base: string): string[] {
   return listTaskFiles(paths.tasks)
     .flatMap((file) => {
       try {
         const { fields } = loadTask(file);
-        return fields.id === id ? [] : [`- ${fields.id} · ${fields.status} · ${fields.title}`];
+        if (fields.id === id) return [];
+        return [`- ${fields.id} · ${fields.status} · ${fields.title}${whereItIs(project, fields.branch, base)}`];
       } catch {
         return [];
       }
     })
     .slice(-BOARD_TASKS);
+}
+
+/**
+ * Whether a task's work is in the base branch. "delivered" means a pull request is open, not that the code is on
+ * main: a real planner built criteria on two delivered-but-unmerged tasks, which a browser on main could not find
+ * (pilot lesson 11).
+ */
+function whereItIs(project: string, branch: string | null, base: string): string {
+  if (!branch || !branchExists(project, branch)) return '';
+  return tryGit(project, ['merge-base', '--is-ancestor', branch, base]).code === 0
+    ? ` · merged into ${base}`
+    : ` · NOT in ${base} yet — do not build on it`;
 }
 
 function handoffsFor(paths: TracePaths, id: string): HandoffRecord[] {
@@ -66,7 +79,7 @@ export function buildMemory(
     const stat = tryGit(project, ['diff', '--shortstat', `${baseBranch}...${task.branch}`]).stdout.trim();
     if (stat) facts.push(`- ${task.branch} vs ${baseBranch}: ${stat}`);
   }
-  const board = stage === 'spec' || stage === 'plan' ? otherTasks(paths, task.id) : [];
+  const board = stage === 'spec' || stage === 'plan' ? otherTasks(project, paths, task.id, baseBranch) : [];
   const log = taskLogTail(`${paths.tasks}/${task.id}.md`);
   const journal = existsSync(paths.journal)
     ? readFileSync(paths.journal, 'utf8').trimEnd().split('\n').slice(-JOURNAL_LINES).join('\n')

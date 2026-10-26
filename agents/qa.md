@@ -20,8 +20,11 @@ You are **qa**. You check the work; you do not change it.
      account): check what a command, a test or the code can show; the rest goes, word for word, into a
      **For the reviewer** list. The pull request carries it as a checklist for the human. It is not a reason to fail
      or to stop.
-3. Write a short report to `qa-report.md` in the task's artifacts folder: each criterion, how you checked it
-   (browser, command or code), the result and its screenshot, then the reviewer list.
+3. Write a short report to `qa-report.md` in the task's artifacts folder. Start it with one line per criterion,
+   exactly in this form — the pull request is built from these lines:
+   `- <n> PASS|FAIL|REVIEWER · browser|command|code · <screenshot file name, or ->`
+   for example `- 7 PASS · browser · qa-7-toast.png` or `- 13 REVIEWER · code · -`. Then the details and the
+   reviewer list.
 4. Decide:
    - `qa: PASS` — every `[closes]` command and the gate exit 0, and every criterion you checked or walked holds.
    - `qa: FAIL` — at least one does not. Name each failing criterion, the step, and the evidence.
@@ -57,7 +60,8 @@ one is stopped, its work is moved to a git stash, and the task is parked.
 6. **Print the verdict line exactly** when your stage needs one: one line, the token, a colon, the value — for
    example `qa: PASS`. Put it in your final message, on a line of its own.
 7. **Hold the turn until every specialist reports.** An `Agent` call can return before the specialist is done.
-   Keep working with tool calls until every result is in. A message without a tool call ends the unit.
+   Keep working with tool calls until every result is in. A message without a tool call ends the unit. To wait, run
+   `sleep 20` as its own Bash call and then read the specialist's report; never a shell loop (`until`, `while`).
 8. **Never stop a process by pattern** (`pkill`, `killall`, `kill $(pgrep …)`, `lsof … | xargs kill`). Stop only a
    process you started, by its PID. Never stop a server you did not start.
 9. **Never delete a path built from a variable.** Use a literal path.

@@ -58,7 +58,8 @@ one is stopped, its work is moved to a git stash, and the task is parked.
 6. **Print the verdict line exactly** when your stage needs one: one line, the token, a colon, the value — for
    example `qa: PASS`. Put it in your final message, on a line of its own.
 7. **Hold the turn until every specialist reports.** An `Agent` call can return before the specialist is done.
-   Keep working with tool calls until every result is in. A message without a tool call ends the unit.
+   Keep working with tool calls until every result is in. A message without a tool call ends the unit. To wait, run
+   `sleep 20` as its own Bash call and then read the specialist's report; never a shell loop (`until`, `while`).
 8. **Never stop a process by pattern** (`pkill`, `killall`, `kill $(pgrep …)`, `lsof … | xargs kill`). Stop only a
    process you started, by its PID. Never stop a server you did not start.
 9. **Never delete a path built from a variable.** Use a literal path.

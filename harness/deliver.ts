@@ -2,7 +2,7 @@
 // part and no token is spent: the body is composed from the task file, the handoffs and git. Nothing ever merges —
 // the only `gh` verbs here are `auth status`, `pr view` and `pr create`, and the self-test checks that.
 
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { HarnessConfig } from './config.ts';
 import { checkBranch } from './contracts/branch.ts';
@@ -54,18 +54,49 @@ export function deliveryPreflight(project: string, config: HarnessConfig, overri
   return null;
 }
 
+/** One criterion line of the QA report: `- 7 PASS · browser · qa-7-toast.png`. */
+export interface QaLine {
+  n: number;
+  result: 'PASS' | 'FAIL' | 'REVIEWER';
+  how: 'browser' | 'command' | 'code';
+  evidence: string | null;
+}
+
+/** The criterion lines of `qa-report.md` (agents/qa.md fixes the form). Other lines are prose and are skipped. */
+export function readQaLines(report: string): Map<number, QaLine> {
+  const lines = new Map<number, QaLine>();
+  for (const match of report.matchAll(
+    /^-\s*(\d+)\s+(PASS|FAIL|REVIEWER)\s*·\s*(browser|command|code)(?:\s*·\s*(\S+))?/gm,
+  )) {
+    const evidence = match[4] && match[4] !== '-' ? match[4] : null;
+    lines.set(Number(match[1]), {
+      n: Number(match[1]),
+      result: match[2] as QaLine['result'],
+      how: match[3] as QaLine['how'],
+      evidence,
+    });
+  }
+  return lines;
+}
+
 /** The pull-request body. The task file is gitignored in every project, so the reviewer sees only this. */
 export function prBody(
   task: LoadedTask,
   handoffs: readonly HandoffRecord[],
   commits: readonly string[],
   agent: string,
+  /** QA's report: a `[found]` criterion it walked in the browser is marked done, not left for the reviewer. */
+  qaReport = '',
 ): string {
   const { doc, fields } = task;
   const mine = handoffs.filter((record) => record.task === fields.id);
   const units = mine.filter((record) => typeof record.unit === 'number');
   const verdictOf = (stage: string) => [...units].reverse().find((record) => record.stage === stage && record.verdict);
   const criteria = parseCriteria(getSection(doc, 'Acceptance criteria'));
+  const qa = readQaLines(qaReport);
+  const walkedCount = criteria.filter(
+    (c) => c.tag === 'found' && qa.get(c.n)?.how === 'browser' && qa.get(c.n)?.result === 'PASS',
+  ).length;
   const section = (name: string) => getSection(doc, name)?.trim() || '_(empty)_';
   const review = ['qa', 'judge'].flatMap((stage) => {
     const record = verdictOf(stage);
@@ -79,13 +110,23 @@ export function prBody(
     section('Plan'),
     ``,
     `## Acceptance`,
-    ...criteria.map((criterion) =>
-      criterion.tag === 'closes'
-        ? `- ✓ \`${criterion.command ?? '?'}\` — ${criterionLabel(criterion) || 'exits 0'}`
-        : `- [ ] [${criterion.tag}] ${criterion.text} — for a human to check`,
-    ),
+    ...criteria.map((criterion) => {
+      if (criterion.tag === 'closes')
+        return `- ✓ \`${criterion.command ?? '?'}\` — ${criterionLabel(criterion) || 'exits 0'}`;
+      const walked = qa.get(criterion.n);
+      if (criterion.tag === 'found' && walked?.result === 'PASS' && walked.how === 'browser') {
+        const shot = walked.evidence ? ` (\`${walked.evidence}\`)` : '';
+        return `- ✓ [found] ${criterion.text} — walked in the browser by QA${shot}`;
+      }
+      return `- [ ] [${criterion.tag}] ${criterion.text} — for a human to check`;
+    }),
     ...(criteria.some((criterion) => criterion.tag === 'closes')
       ? ['', '_Every `[closes]` command was re-run green by the loop before the task was marked done._']
+      : []),
+    ...(walkedCount
+      ? [
+          `_QA walked ${walkedCount} \`[found]\` criteri${walkedCount === 1 ? 'on' : 'a'} in a browser on the running app; its screenshots are in the loop's artifacts folder._`,
+        ]
       : []),
     ``,
     `## Review`,
@@ -125,7 +166,9 @@ export function deliverTask(
   const artifacts = join(paths.artifacts, fields.id);
   mkdirSync(artifacts, { recursive: true });
   const bodyFile = join(artifacts, 'pr-body.md');
-  writeFileSync(bodyFile, scrubSecrets(prBody(task, readHandoffs(paths), branch.commits, options.agent)));
+  const qaFile = join(artifacts, 'qa-report.md');
+  const qaReport = existsSync(qaFile) ? readFileSync(qaFile, 'utf8') : '';
+  writeFileSync(bodyFile, scrubSecrets(prBody(task, readHandoffs(paths), branch.commits, options.agent, qaReport)));
 
   const push = tryGit(project, ['push', '--quiet', '--set-upstream', config.deliver.remote, fields.branch]);
   if (push.code !== 0) return park(task, paths, `push failed: ${scrubSecrets(firstLine(push))}`);

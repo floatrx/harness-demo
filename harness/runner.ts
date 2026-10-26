@@ -928,7 +928,7 @@ export function previewUnit(project: string, id: string): Preview {
       config,
       specialists,
       memory,
-      appUrl: config.app?.stages.includes(stage) ? 'http://127.0.0.1:<port>' : null,
+      appUrl: config.app?.stages.includes(stage) ? `http://${config.app.host}:<port>` : null,
     }),
   };
 }

@@ -4,5 +4,6 @@
   "limits": { "bounces": 2, "prototypeRounds": 3, "unitTimeoutMinutes": 30 },
   "gate": "pnpm typecheck && pnpm test",
   "probe": null,
-  "deliver": { "pr": false }
+  "deliver": { "pr": false },
+  "app": { "start": "pnpm exec next dev -p {port}", "ready": "/" }
 }

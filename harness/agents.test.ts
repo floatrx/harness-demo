@@ -204,7 +204,7 @@ test('preview: only the app stages get the browser — --mcp-config, --strict-mc
     assert.equal(qa.at(-1), 'mcp__playwright', 'allowed after the variadic --allowedTools');
     assert.match(
       previewUnit(sandbox.project, 'T-001').prompt,
-      /- App: http:\/\/127\.0\.0\.1:<port> — the runner started it/,
+      /- App: http:\/\/localhost:<port> — the runner started it/,
     );
     const implement = previewUnit(sandbox.project, 'T-002').invocation.args;
     assert.ok(!implement.includes('--mcp-config') && !implement.includes('mcp__playwright'));

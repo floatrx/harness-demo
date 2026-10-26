@@ -32,6 +32,11 @@ export interface AppConfig {
   start: string;
   /** Path polled until the server answers anything. */
   ready: string;
+  /**
+   * The host in the URL the units get. `localhost`, not 127.0.0.1: Next 16's dev server blocks its HMR socket for any
+   * other origin, so a page opened on 127.0.0.1 never hydrates and its buttons do nothing (real browser run, T-005).
+   */
+  host: string;
   timeoutSeconds: number;
   /** Unit stages that get the app (and, from B2, a browser). */
   stages: UnitStage[];
@@ -41,6 +46,7 @@ export interface AppConfig {
 
 export const APP_DEFAULTS: Omit<AppConfig, 'start'> = {
   ready: '/',
+  host: 'localhost',
   timeoutSeconds: 60,
   stages: ['qa', 'prototype'],
   browser: '@playwright/mcp@0.0.83',
@@ -133,6 +139,8 @@ export const DEFAULT_CONFIG: HarnessConfig = {
       'Bash(head:*)',
       'Bash(tail:*)',
       'Bash(wc:*)',
+      // The allowed way to wait for a specialist (standing rule 7): `until …` loops are refused (pilot lesson 14).
+      'Bash(sleep:*)',
       'Bash(pnpm:*)',
       'Bash(npm test:*)',
       'Bash(npx:*)',

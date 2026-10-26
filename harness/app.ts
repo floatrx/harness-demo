@@ -88,7 +88,7 @@ export async function startApp(
 ): Promise<AppStart> {
   const port = await freePort();
   const command = app.start.replaceAll('{port}', String(port));
-  const url = `http://127.0.0.1:${port}`;
+  const url = `http://${app.host}:${port}`;
   mkdirSync(dirname(files.log), { recursive: true });
   const out = openSync(files.log, 'a');
   let child: ChildProcess;
