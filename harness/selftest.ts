@@ -13,8 +13,9 @@ import { dirty } from './git.ts';
 import { type UnitResult, runUnit } from './runner.ts';
 import { supervise } from './supervise.ts';
 import { type Sandbox, makeSandbox, readLog, seedTask } from './testkit/sandbox.ts';
-import { accept, addReview, answerQuestion, approve, comment, reopen, submit } from './task/write.ts';
+import { accept, addReview, answerQuestion, approve, comment, reopen, stamp, submit } from './task/write.ts';
 import { listTaskFiles, loadTask, saveTask } from './task/task.ts';
+import { getSection } from './task/parse.ts';
 
 export interface Case {
   name: string;
@@ -511,6 +512,12 @@ export const CASES: Case[] = [
         expect(left.length === 0, `dirty after create: ${left.map((entry) => entry.path).join(', ')}`);
         const seeds = listTaskFiles(join(dest, '.harness/tasks')).map((file) => loadTask(file));
         expect(seeds.length === 3, `${seeds.length} seeds`);
+        const today = stamp(new Date()).slice(0, 10);
+        for (const seed of seeds)
+          expect(
+            seed.fields.created === today && (getSection(seed.doc, 'Log') ?? '').includes(`${today} `),
+            `${seed.fields.id} keeps the template's date: created ${seed.fields.created}`,
+          );
         for (const seed of seeds)
           expect(validateTask(seed.doc).length === 0, `${seed.fields.id}: ${JSON.stringify(validateTask(seed.doc))}`);
         expect(

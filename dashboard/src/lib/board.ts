@@ -87,7 +87,10 @@ export interface BoardModel {
   cards: CardModel[];
   /** Task files the core could not parse: shown, never silently dropped. */
   unreadable: { file: string; reason: string }[];
+  /** What blocks the loop until the human acts: questions, approvals, reviews, parked tasks. */
   waiting: CardModel[];
+  /** Drafts: the human's own work, which starts the loop on Submit — counted apart, never "nothing waits". */
+  drafts: CardModel[];
   /** null cost and duration when no unit reported usage (the fake agent reports none). */
   today: { units: number; costUsd: number | null; durationMs: number | null };
   dock: DockModel;
@@ -256,6 +259,7 @@ export function loadBoard(id: string): BoardModel {
     cards,
     unreadable,
     waiting: cards.filter((card) => card.action && card.action !== 'Submit'),
+    drafts: cards.filter((card) => card.action === 'Submit'),
     today: {
       units: todays.length,
       costUsd: todays.some((handoff) => handoff.usage?.costUsd != null)

@@ -150,7 +150,8 @@ loop can have — hence the gate's base re-run.
 
 `harness/supervise.ts` is policy over time: one loop per checkout (the lock), PAUSE and STOP read at the unit
 boundary, never mid-unit; a stop after three units in a row that moved nothing (barren); a wait-and-retry when the
-agent cannot run (a usage limit, the network, the login, a red probe).
+agent cannot run (a usage limit, the network, the login, a red probe). An idle supervisor polls the board, and a
+human action (any write to the human-write ledger) wakes it at once.
 
 | Exit | Meaning |
 |---|---|

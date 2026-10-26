@@ -107,3 +107,27 @@ test('agent down with sub-second naps: the ceiling still ends the loop (exit 4)'
     sandbox.cleanup();
   }
 });
+
+test('a human action wakes an idle supervisor at once, not after the idle poll (quickstart review)', async () => {
+  const { supervise, requestStop } = await import('./supervise.ts');
+  const { FAST_SUPERVISOR } = await import('./testkit/sandbox.ts');
+  const { submit } = await import('./task/write.ts');
+  const { loadTask, saveHumanTask } = await import('./task/task.ts');
+  // An idle poll of an hour: only the wake-up can start the spec unit inside this test.
+  const sandbox = makeSandbox({ supervisor: { ...FAST_SUPERVISOR, idlePollSeconds: 3600, pausePollSeconds: 0.05 } });
+  const paths = tracePaths(sandbox.project);
+  const progress = () => (existsSync(paths.progress) ? readFileSync(paths.progress, 'utf8') : '');
+  seedTask(sandbox, { id: 'T-001', status: 'draft' });
+  const running = supervise(sandbox.project, { ...sandbox.agent });
+  try {
+    await until(() => progress().includes('supervisor · start'), 'the supervisor to start');
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const path = sandbox.taskPath('T-001');
+    saveHumanTask(path, submit(loadTask(path).doc));
+    await until(() => progress().includes('unit 1 · T-001 · spec · exit 0'), 'the spec unit after Submit', 5_000);
+  } finally {
+    requestStop(sandbox.project);
+    await running;
+    sandbox.cleanup();
+  }
+});

@@ -190,6 +190,21 @@ test('stream-json: the verdict comes from the final result, not from a specialis
   assert.equal(readUsage('qa: PASS'), null);
 });
 
+test('preview of a draft shows the spec unit it gets after Submit, and changes nothing', () => {
+  const sandbox = makeSandbox();
+  try {
+    seedTask(sandbox, { id: 'T-003', status: 'draft' });
+    const before = readFileSync(sandbox.taskPath('T-003'), 'utf8');
+    const preview = previewUnit(sandbox.project, 'T-003');
+    assert.equal(preview.stage, 'spec');
+    assert.equal(preview.note, 'T-003 is a draft: this is the spec unit it gets after Submit');
+    assert.match(preview.prompt, /# Stage: spec/);
+    assert.equal(readFileSync(sandbox.taskPath('T-003'), 'utf8'), before, 'the task file is untouched');
+  } finally {
+    sandbox.cleanup();
+  }
+});
+
 test('preview shows the next unit of a task without running it', () => {
   const sandbox = makeSandbox();
   try {

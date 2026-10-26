@@ -777,6 +777,8 @@ function spawnAgent(input: SpawnInput): Promise<AgentRun> {
 
 export interface Preview {
   task: string;
+  /** Set when the task is not where the unit would run yet, e.g. a draft previewed as if submitted. */
+  note?: string;
   stage: UnitStage;
   role: string;
   invocation: Invocation;
@@ -793,7 +795,11 @@ export function previewUnit(project: string, id: string): Preview {
   const paths = tracePaths(project);
   ensureTrace(paths);
   const task = loadTask(join(paths.tasks, `${id}.md`));
-  const stage = stageFor(task.fields);
+  // A draft has no unit yet; show the spec unit Submit would give it, so the prompt is visible before any token
+  // (the README's quickstart previews a seed draft — it used to fail here).
+  const draft = task.fields.status === 'draft';
+  const fields: TaskFields = draft ? { ...task.fields, status: 'spec' } : task.fields;
+  const stage = stageFor(fields);
   if (!stage) throw new ConfigError(`${id} is in ${task.fields.status}: no agent unit runs there`);
   const role = STAGE_ROLE[stage];
   const registry = loadRegistry(project);
@@ -803,10 +809,11 @@ export function previewUnit(project: string, id: string): Preview {
   const branch =
     stage === 'spec' || stage === 'plan'
       ? config.baseBranch
-      : (task.fields.branch ?? `harness/${id}-${slugify(task.fields.title)}`);
-  const memory = buildMemory(project, paths, task.fields, stage, config.baseBranch);
+      : (fields.branch ?? `harness/${id}-${slugify(fields.title)}`);
+  const memory = buildMemory(project, paths, fields, stage, config.baseBranch);
   return {
     task: id,
+    ...(draft ? { note: `${id} is a draft: this is the spec unit it gets after Submit` } : {}),
     stage,
     role,
     invocation: invocation(config, config.roles.models[role] ?? 'sonnet', agentsFile),
@@ -814,7 +821,7 @@ export function previewUnit(project: string, id: string): Preview {
     prompt: buildPrompt({
       stage,
       role,
-      task: task.fields,
+      task: fields,
       taskRel: relative(project, task.path),
       branch,
       artifacts: `.harness/artifacts/${id}`,

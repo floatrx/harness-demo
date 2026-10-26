@@ -9,6 +9,10 @@ import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { git, run } from './git.ts';
 import { type Project, ProjectError, addProject, initProject } from './projects.ts';
+import { tracePaths } from './paths.ts';
+import { getSection, normalizeBody, putSection, setField } from './task/parse.ts';
+import { listTaskFiles, loadTask, saveTask } from './task/task.ts';
+import { stamp } from './task/write.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = resolve(HERE, '..');
@@ -42,6 +46,7 @@ export function createExample(dest: string, options: ExampleOptions = {}): Proje
     },
   });
   log(`copied ${relative(process.cwd(), template) || template} → ${target}`);
+  stampSeeds(target);
 
   git(target, ['init', '--quiet', '-b', 'main']);
   initProject(target);
@@ -60,4 +65,18 @@ export function createExample(dest: string, options: ExampleOptions = {}): Proje
   const project = addProject(target, options.name ?? basename(target));
   log(`registered ${project.id} · ${project.name}`);
   return project;
+}
+
+/**
+ * The seeds carry the template's dates; a copy made today showed "Created 25 Oct" (quickstart review). Each seed gets
+ * the copy's date in `created` and in its `created · human` log line. Only the seeds' own fields change.
+ */
+function stampSeeds(target: string, date = new Date()): void {
+  for (const file of listTaskFiles(tracePaths(target).tasks)) {
+    const doc = loadTask(file).doc;
+    setField(doc, 'created', stamp(date).slice(0, 10));
+    const log = getSection(doc, 'Log') ?? '';
+    putSection(doc, 'Log', normalizeBody(log.replace(/^- .*? created · human$/m, `- ${stamp(date)} created · human`)));
+    saveTask(file, doc);
+  }
 }

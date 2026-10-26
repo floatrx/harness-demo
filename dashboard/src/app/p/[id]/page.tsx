@@ -43,7 +43,7 @@ export default async function BoardPage({ params, searchParams }: Props) {
             <div>
               <h1 className="text-2xl font-semibold tracking-tight">Board</h1>
               {/* An empty board has one thing to do, and its panel below says it. */}
-              {!!board.cards.length && <WaitingLine waiting={board.waiting} />}
+              {!!board.cards.length && <WaitingLine waiting={board.waiting} drafts={board.drafts} />}
             </div>
             {!!board.cards.length && <CreateTaskModal projectId={id} />}
           </div>

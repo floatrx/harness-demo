@@ -289,6 +289,7 @@ async function main(): Promise<void> {
       const root = project();
       try {
         const preview = previewUnit(root, args[0] ?? '');
+        if (preview.note) console.log(`# ${preview.note}`);
         console.log(`# ${preview.task} · stage ${preview.stage} · coordinator ${preview.role}`);
         console.log(`# specialists: ${preview.specialists.join(', ') || '(none)'}`);
         console.log(

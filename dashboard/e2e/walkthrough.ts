@@ -327,8 +327,11 @@ try {
   await page.getByTestId('task-drawer').waitFor();
   await shot(page, 'task-created');
 
-  // 3. Submit the drafts.
+  // 3. Submit the drafts. The first screen names them as the human's work, never "nothing waits for you".
   await page.goto(board(projectId));
+  const firstLine = (await page.getByTestId('waiting-line').textContent()) ?? '';
+  if (!/4 drafts are yours — Submit starts the loop on each\./.test(firstLine))
+    throw new Error(`waiting line over four drafts: "${firstLine}"`);
   for (const id of ['T-001', 'T-002', 'T-003', 'T-004']) {
     await page.locator(`[data-task="${id}"] [data-testid="card-action"]`).click();
     await until(`${id} to leave draft`, statusIs(id, 'spec'), 10_000);

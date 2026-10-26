@@ -155,6 +155,17 @@ test('create makes the next draft; a missing title is 400', async () => {
   assert.equal(loadTask(sandbox.taskPath(id)).fields.kind, 'logic');
 });
 
+test('the board separates drafts from what blocks the loop (quickstart review)', async () => {
+  const { loadBoard } = await import('./board.ts');
+  seedTask(sandbox, { id: 'T-020', status: 'draft' });
+  seedTask(sandbox, { id: 'T-021', status: 'planned', kind: 'logic', scope: ['src/**'], closes: ['true'] });
+  const model = loadBoard(projectId);
+  assert.ok(model.drafts.some((card) => card.id === 'T-020'));
+  assert.ok(!model.waiting.some((card) => card.id === 'T-020'), 'a draft does not block the loop');
+  assert.ok(model.waiting.some((card) => card.id === 'T-021'));
+  assert.ok(!model.drafts.some((card) => card.id === 'T-021'));
+});
+
 test('the board offers drag moves only along human transitions, and none for the running task', async () => {
   const { loadBoard } = await import('./board.ts');
   seedTask(sandbox, { id: 'T-010', status: 'planned', kind: 'logic', scope: ['src/**'], closes: ['true'] });

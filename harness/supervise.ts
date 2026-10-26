@@ -8,7 +8,7 @@
 //
 // Supervisor exit codes: 0 stopped or drained · 2 broken configuration · 3 barren · 4 gave up waiting.
 
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { type HarnessConfig, ConfigError, loadConfig } from './config.ts';
 import { deliveryPreflight } from './deliver.ts';
 import { notify } from './notify.ts';
@@ -95,11 +95,12 @@ export async function supervise(project: string, options: SuperviseOptions = {})
   process.once('SIGTERM', onSignal);
   const stopRequested = () => signalled || existsSync(paths.stop);
 
-  /** Sleeps up to `ms`, waking early for STOP. Returns false when a stop was requested. */
-  const nap = async (ms: number) => {
+  /** Sleeps up to `ms`, waking early for STOP, or when `wake` says so. Returns false when a stop was requested. */
+  const nap = async (ms: number, wake?: () => boolean) => {
     const until = Date.now() + ms;
     while (Date.now() < until) {
       if (stopRequested()) return false;
+      if (wake?.()) break;
       await sleep(Math.min(s.pausePollSeconds * 1000, until - Date.now()));
     }
     return !stopRequested();
@@ -145,7 +146,13 @@ export async function supervise(project: string, options: SuperviseOptions = {})
           return finish(2, result.message);
         case EXIT.idle:
           if (options.onceThrough) return finish(0, 'drained: nothing left to take');
-          if (!(await nap(s.idlePollSeconds * 1000))) return finish(0, 'stopped while idle');
+          {
+            // Every human action (CLI or dashboard) appends to the human-write ledger: wake on it instead of
+            // sleeping out the idle poll, or an Approve sat unanswered for up to 30 s (quickstart review).
+            const ledger = () => (existsSync(paths.humanWrites) ? statSync(paths.humanWrites).size : 0);
+            const seen = ledger();
+            if (!(await nap(s.idlePollSeconds * 1000, () => ledger() !== seen))) return finish(0, 'stopped while idle');
+          }
           break;
         case EXIT.agentDown: {
           if (waitedMs >= s.usageCeilingSeconds * 1000)
