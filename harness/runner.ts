@@ -21,6 +21,7 @@ import { runClosing, uncallableCommands } from './contracts/closing.ts';
 import { runGate } from './contracts/gate.ts';
 import { judgeScope, outsideHarness, quarantine, snapshot } from './contracts/scope.ts';
 import { limitResetAt, readUsage, readVerdict, resultEvent } from './contracts/trace.ts';
+import { type RunningApp, startApp, stopApp, stopOrphanApps } from './app.ts';
 import {
   type AgentDef,
   agentsForStage,
@@ -170,7 +171,14 @@ function alive(pid: number): boolean {
 // ---------------------------------------------------------------------------
 
 export async function runUnit(project: string, options: RunOptions = {}): Promise<UnitResult> {
-  const result = await runStep(project, options);
+  // Apps the step started; stopped here, after the step, whatever way it ended (done, park, crash, timeout).
+  const apps: RunningApp[] = [];
+  let result: UnitResult;
+  try {
+    result = await runStep(project, options, apps);
+  } finally {
+    for (const app of apps) await stopApp(app);
+  }
   if (result.task && result.moved) await notifyAfter(project, result);
   return result;
 }
@@ -189,7 +197,7 @@ async function notifyAfter(project: string, result: UnitResult): Promise<void> {
   }
 }
 
-async function runStep(project: string, options: RunOptions): Promise<UnitResult> {
+async function runStep(project: string, options: RunOptions, apps: RunningApp[]): Promise<UnitResult> {
   const paths = tracePaths(project);
   ensureTrace(paths);
   const say = (line: string) => {
@@ -208,6 +216,7 @@ async function runStep(project: string, options: RunOptions): Promise<UnitResult
     return { exit: EXIT.config, message: `a unit is already running: ${running.task} ${running.stage}`, moved: false };
   // A running.json whose process is gone is left by a crash: the tree check below catches its dirt.
   if (running) rmSync(paths.running, { force: true });
+  for (const note of await stopOrphanApps(paths.dir)) say(note);
 
   const drift = standingRulesDrift();
   if (drift.length)
@@ -271,7 +280,7 @@ async function runStep(project: string, options: RunOptions): Promise<UnitResult
   const task = loaded.find((item) => item.fields.id === step.task.id) as LoadedTask;
   if (step.kind === 'advance') return advance(project, paths, task, step.action, step.target, say);
   if (step.kind === 'deliver') return deliver(project, paths, config, task, options, say);
-  return agentUnit(project, paths, config, registry, task, step.stage, options, say);
+  return agentUnit(project, paths, config, registry, task, step.stage, options, say, apps);
 }
 
 function advance(
@@ -351,6 +360,8 @@ async function agentUnit(
   stage: UnitStage,
   options: RunOptions,
   say: (line: string) => void,
+  /** Filled with the app this unit starts; `runUnit` stops it after the unit. */
+  apps: RunningApp[],
 ): Promise<UnitResult> {
   const role = STAGE_ROLE[stage];
   const unit = nextUnitNumber(paths);
@@ -380,6 +391,19 @@ async function agentUnit(
   } catch (error) {
     return { exit: EXIT.config, message: (error as Error).message, task: id, moved: false };
   }
+  // -- the app (qa, prototype): started before the snapshot, so what the server writes at start is not the unit's.
+  let appUrl: string | null = null;
+  if (config.app?.stages.includes(stage)) {
+    const started = await startApp(config.app, project, { log: paths.appLog(unit), record: paths.app(unit) });
+    if (started.ok) {
+      apps.push(started.app);
+      appUrl = started.app.url;
+    } else {
+      // Not a stop: a broken dev server must not park every task. The unit runs as it would without an app.
+      appendLog(task.doc, `  ↳ app did not start: ${started.reason}`);
+      say(`unit ${unit} · ${id} · app did not start: ${started.reason}`);
+    }
+  }
   if (statusAtPick === 'ready') {
     const found = findTransition(task.fields, 'agent', 'start', ctx);
     if (found) moveTo(task.doc, found.target, `runner · unit ${unit}`);
@@ -407,7 +431,18 @@ async function agentUnit(
   try {
     run = await spawnAgent({
       invocation: how,
-      prompt: buildPrompt({ stage, role, task: task.fields, taskRel, branch, artifacts, config, specialists, memory }),
+      prompt: buildPrompt({
+        stage,
+        role,
+        task: task.fields,
+        taskRel,
+        branch,
+        artifacts,
+        config,
+        specialists,
+        memory,
+        appUrl,
+      }),
       cwd: project,
       tracePath: paths.unit(unit),
       timeoutMs: config.limits.unitTimeoutMinutes * 60_000,
@@ -423,6 +458,7 @@ async function agentUnit(
         HARNESS_UNIT: String(unit),
         HARNESS_BRANCH: branch,
         HARNESS_ARTIFACTS: join(project, artifacts),
+        ...(appUrl ? { HARNESS_APP_URL: appUrl } : {}),
         HARNESS_AGENTS_FILE: agentsFile,
         CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1',
       },
@@ -649,6 +685,8 @@ export interface PromptInput {
   config: HarnessConfig;
   specialists: readonly AgentDef[];
   memory: string;
+  /** The app the runner started for this unit, if any. */
+  appUrl?: string | null;
 }
 
 /** Stage prompt + standing rules + the specialists this stage may dispatch + memory + `## This run`. */
@@ -683,6 +721,9 @@ export function buildPrompt(input: PromptInput): string {
     `- Scope: ${task.scope.length ? task.scope.join(', ') : '(none yet — the plan sets it)'}`,
     `- Gate: ${task.gate ?? config.gate ?? '(none)'}`,
     `- Artifacts folder: ${input.artifacts}/`,
+    input.appUrl
+      ? `- App: ${input.appUrl} — the runner started it and stops it after this unit; do not start or stop a server.`
+      : '',
     ownedSections(role),
     `- Bounces so far: ${task.bounces} of ${config.limits.bounces}`,
     stage === 'qa' && config.roles.mergeQaJudge
@@ -828,6 +869,7 @@ export function previewUnit(project: string, id: string): Preview {
       config,
       specialists,
       memory,
+      appUrl: config.app?.stages.includes(stage) ? 'http://127.0.0.1:<port>' : null,
     }),
   };
 }

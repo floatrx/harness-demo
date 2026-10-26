@@ -26,6 +26,26 @@ export interface VerdictRule {
   values: string[];
 }
 
+/** The project's app, started by the runner for the units that look at it (qa, prototype). Opt-in: null = none. */
+export interface AppConfig {
+  /** Shell command with `{port}`, e.g. `pnpm exec next dev -p {port}`. */
+  start: string;
+  /** Path polled until the server answers anything. */
+  ready: string;
+  timeoutSeconds: number;
+  /** Unit stages that get the app (and, from B2, a browser). */
+  stages: UnitStage[];
+  /** The Playwright MCP package the browser units run through `npx`, pinned. */
+  browser: string;
+}
+
+export const APP_DEFAULTS: Omit<AppConfig, 'start'> = {
+  ready: '/',
+  timeoutSeconds: 60,
+  stages: ['qa', 'prototype'],
+  browser: '@playwright/mcp@0.0.83',
+};
+
 export interface HarnessConfig {
   baseBranch: string;
   autonomy: { mode: 'gated' | 'full' };
@@ -43,6 +63,7 @@ export interface HarnessConfig {
   verdicts: Partial<Record<UnitStage, VerdictRule>>;
   /** `pr: true` → a done task's branch is pushed to `remote` and a pull request is opened. Nothing ever merges it. */
   deliver: { pr: boolean; remote: string };
+  app: AppConfig | null;
   /** Telegram events to send (keys in env or `.env`; none → silent). */
   notify: { events: NotifyEvent[] };
   agent: {
@@ -88,6 +109,7 @@ export const DEFAULT_CONFIG: HarnessConfig = {
     judge: { token: 'judge', values: ['CONFIRMED', 'REJECTED'] },
   },
   deliver: { pr: false, remote: 'origin' },
+  app: null,
   notify: { events: [...NOTIFY_EVENTS] },
   agent: {
     command: null,
@@ -159,6 +181,16 @@ export function loadConfig(project: string): HarnessConfig {
   const config = merge(DEFAULT_CONFIG, raw);
   if (!['gated', 'full'].includes(config.autonomy.mode)) throw new ConfigError(`autonomy.mode: gated | full`);
   if (!(config.limits.bounces >= 1)) throw new ConfigError('limits.bounces must be ≥ 1');
+  if (config.app) {
+    const app = { ...APP_DEFAULTS, ...config.app };
+    if (typeof app.start !== 'string' || !app.start.includes('{port}'))
+      throw new ConfigError('app.start must contain {port} — the runner picks a free port per unit');
+    if (!app.ready.startsWith('/')) throw new ConfigError('app.ready is a path, e.g. "/"');
+    if (!(app.timeoutSeconds > 0)) throw new ConfigError('app.timeoutSeconds must be > 0');
+    const bad = app.stages.filter((stage) => !(UNIT_STAGES as readonly string[]).includes(stage));
+    if (bad.length) throw new ConfigError(`app.stages: unknown ${bad.join(', ')} (${UNIT_STAGES.join(' | ')})`);
+    config.app = app;
+  }
   const unknown = config.notify.events.filter((event) => !(NOTIFY_EVENTS as readonly string[]).includes(event));
   if (unknown.length)
     throw new ConfigError(`notify.events: unknown ${unknown.join(', ')} (${NOTIFY_EVENTS.join(' | ')})`);

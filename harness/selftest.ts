@@ -11,6 +11,7 @@ import { baseAgentsDir } from './agents.ts';
 import { join } from 'node:path';
 import { dirty } from './git.ts';
 import { type UnitResult, runUnit } from './runner.ts';
+import { portBusy } from './app.ts';
 import { supervise } from './supervise.ts';
 import { type Sandbox, makeSandbox, readLog, seedTask } from './testkit/sandbox.ts';
 import { accept, addReview, answerQuestion, approve, comment, reopen, stamp, submit } from './task/write.ts';
@@ -41,6 +42,24 @@ async function withSandbox(config: Record<string, unknown>, body: (sandbox: Sand
 }
 
 const READY = { status: 'ready' as const, scope: ['src/**'], closes: ['test -f src/feature.txt'] };
+
+const FAKE_APP = new URL('./testkit/fake-app.ts', import.meta.url).pathname;
+const withApp = (mode: string, timeoutSeconds = 5) => ({
+  app: { start: `node ${JSON.stringify(FAKE_APP)} {port} ${mode}`, timeoutSeconds },
+});
+/** A fake-agent step that records what it saw of the app: the URL and the page, or "none". */
+const PROBE_APP = {
+  exec: `node -e "const f=process.env.HARNESS_ARTIFACTS+'/app.txt'; const u=process.env.HARNESS_APP_URL; if (!u) require('fs').writeFileSync(f,'none'); else fetch(u).then((r)=>r.text()).then((t)=>require('fs').writeFileSync(f,u+'\\n'+t))"`,
+};
+/** Implement first (the qa unit needs the task branch), then the scripted qa unit. */
+async function qaUnit(sandbox: Sandbox, qa: unknown[]): Promise<{ result: UnitResult; seen: string }> {
+  const id = seedTask(sandbox, READY);
+  sandbox.scenario({ steps: { qa: [qa as never] } });
+  await runUnit(sandbox.project, sandbox.agent);
+  const result = await runUnit(sandbox.project, sandbox.agent);
+  const file = join(sandbox.project, '.harness/artifacts', id, 'app.txt');
+  return { result, seen: existsSync(file) ? readFileSync(file, 'utf8') : '(no file)' };
+}
 
 /** One implement unit with a scripted step; the unit must hard-stop and park the task. */
 function hardStop(name: string, actions: unknown[], match: RegExp, config: Record<string, unknown> = {}): Case {
@@ -363,6 +382,41 @@ export const CASES: Case[] = [
         expect(second.exit === 0, `second plan unit exit ${second.exit}: ${second.message}`);
         expect(sandbox.task(id).fields.status === 'planned', `status ${sandbox.task(id).fields.status}`);
         return `parked on 1a. → reopened → the plan unit ran and wrote a readable list → planned`;
+      }),
+  },
+  {
+    name: 'app: a qa unit gets the app the runner started, and the port is free after the unit (QA browser B1)',
+    run: () =>
+      withSandbox(withApp('ok'), async (sandbox) => {
+        const { result, seen } = await qaUnit(sandbox, [PROBE_APP, { say: 'qa: PASS' }]);
+        expect(result.exit === 0 && result.stage === 'qa', `qa unit exit ${result.exit}: ${result.message}`);
+        const [url, page] = seen.split('\n');
+        expect(/^http:\/\/127\.0\.0\.1:\d+$/.test(url ?? '') && /fake app/.test(page ?? ''), `the unit saw: ${seen}`);
+        expect(!(await portBusy(Number(new URL(url ?? '').port))), 'the app still listens after the unit');
+        return `the unit fetched ${url} during qa; the port is free after it`;
+      }),
+  },
+  {
+    name: 'app: an app that never starts does not stop the unit — it runs without one, and the Log says why',
+    run: () =>
+      withSandbox(withApp('fail'), async (sandbox) => {
+        const { result, seen } = await qaUnit(sandbox, [PROBE_APP, { say: 'qa: PASS' }]);
+        expect(result.exit === 0, `qa unit exit ${result.exit}: ${result.message}`);
+        expect(seen === 'none', `the unit saw an app: ${seen}`);
+        const log = readLog(sandbox, result.task ?? '');
+        expect(/app did not start: exited 1 before it was ready/.test(log), 'no "app did not start" line in the Log');
+        return 'app failed → the qa unit ran without HARNESS_APP_URL; the Log names the reason';
+      }),
+  },
+  {
+    name: 'app: a hard-stopped unit still stops its app',
+    run: () =>
+      withSandbox(withApp('ok'), async (sandbox) => {
+        const { result, seen } = await qaUnit(sandbox, [PROBE_APP, { exit: 1 }]);
+        expect(result.exit === 1, `qa unit exit ${result.exit}, expected a hard stop`);
+        const port = Number(new URL(seen.split('\n')[0] ?? 'http://x').port);
+        expect(port > 0 && !(await portBusy(port)), `the app outlived the unit (port ${port})`);
+        return `agent exited 1 → parked; the app is gone from port ${port}`;
       }),
   },
   {
