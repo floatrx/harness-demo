@@ -51,6 +51,8 @@ export const IGNORED = [
   '.harness/JOURNAL.md',
   // The task worktrees (harness/worktree.ts). A project made before them gets the line in `info/exclude` instead.
   '.harness/worktrees/',
+  // The lessons a human applied or rejected (harness/lessons.ts): made at the first decision, local like the journal.
+  '.harness/LESSONS.md',
 ];
 
 /** Secrets: the loop reads Telegram keys from `<project>/.env`, so that file must never be committed. */

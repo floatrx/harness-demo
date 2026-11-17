@@ -21,6 +21,7 @@ import { KINDS, type Kind } from '../task/transitions.ts';
 import { validateTask } from '../task/validate.ts';
 import { accept, answerQuestion, approve, comment, createTask, reopen, revise, submit } from '../task/write.ts';
 import { transitionContext } from '../config.ts';
+import { LessonError, applyLesson, lessonsView, rejectLesson, withdrawLesson } from '../lessons.ts';
 
 const HELP = `harness — an autonomous task harness for Claude Code
 
@@ -47,6 +48,12 @@ Loop
   harness status [--json]
   harness stats [--json]                            units, time, tokens and API-equivalent cost per stage and task
   harness self-test                                 every contract case on a throwaway repo
+
+Lessons (what every later unit reads in its Memory)
+  harness lessons [--json]                          open candidates (repeated parks, denied tools, bounces, notes) and decisions
+  harness lessons apply <key> <rule text>           a candidate becomes a rule in .harness/LESSONS.md
+  harness lessons reject <key>                      a candidate is never proposed again
+  harness lessons withdraw <L-NNN>                  an applied rule leaves Memory; the entry stays as history
 
 Agents and prompts
   harness agents [--check] [--sync]                 the registry (base + project), drift and model checks
@@ -254,14 +261,61 @@ async function main(): Promise<void> {
       console.log(
         `supervisor: ${state.supervisor ? `pid ${state.supervisor}` : 'not running'}${state.paused ? ' · PAUSED' : ''}${state.stopping ? ' · STOP requested' : ''}`,
       );
-      for (const entry of state.inFlight)
-        console.log(`running: unit ${entry.unit} · ${entry.task} · ${entry.stage}`);
+      for (const entry of state.inFlight) console.log(`running: unit ${entry.unit} · ${entry.task} · ${entry.stage}`);
       for (const task of state.tasks) {
         console.log(
           `${task.id}  ${task.status.padEnd(12)} ${task.title}${task.parked ? `\n        parked: ${task.parked}` : ''}`,
         );
         for (const issue of task.issues) console.log(`        ! ${issue}`);
       }
+      return;
+    }
+    case 'lessons': {
+      const root = project();
+      const [sub, target, ...rest] = args;
+      // A decision is the human's: an agent may not record one through the CLI.
+      if (sub && process.env.HARNESS_LOOP) fail('a lesson decision cannot run inside a unit (HARNESS_LOOP is set)', 1);
+      try {
+        if (sub === 'apply') {
+          if (!target || !rest.length) fail('usage: harness lessons apply <key> <rule text>');
+          const entry = applyLesson(root, target, rest.join(' '));
+          console.log(`${entry.id} · applied · ${entry.key}`);
+          return;
+        }
+        if (sub === 'reject') {
+          if (!target) fail('usage: harness lessons reject <key>');
+          const entry = rejectLesson(root, target);
+          console.log(`${entry.id} · rejected · ${entry.key}`);
+          return;
+        }
+        if (sub === 'withdraw') {
+          if (!target) fail('usage: harness lessons withdraw <L-NNN>');
+          const entry = withdrawLesson(root, target);
+          console.log(`${entry.id} · withdrawn · ${entry.key}`);
+          return;
+        }
+        if (sub) fail(`unknown lessons command ${sub} (apply | reject | withdraw)`);
+      } catch (error) {
+        if (error instanceof LessonError) fail(error.message, 1);
+        throw error;
+      }
+      const view = lessonsView(root);
+      if (values.json) {
+        console.log(JSON.stringify(view, null, 2));
+        return;
+      }
+      if (!view.candidates.length)
+        console.log(
+          'No lesson candidates. They appear when the same contract stops two tasks, a tool is denied in three units, or an agent leaves a note.',
+        );
+      for (const candidate of view.candidates) {
+        console.log(`${candidate.kind.padEnd(11)} ${candidate.summary}`);
+        console.log(`            key: ${candidate.key}`);
+      }
+      const decided = view.entries.filter((entry) => entry.status !== 'withdrawn');
+      if (decided.length) console.log('');
+      for (const entry of decided)
+        console.log(`${entry.id} · ${entry.status}${entry.text ? ` · ${entry.text.split('\n')[0]}` : ''}`);
       return;
     }
     case 'agents': {

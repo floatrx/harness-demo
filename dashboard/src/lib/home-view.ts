@@ -1,6 +1,7 @@
 /* Server-only: what /home shows — what waits for the human, and five numbers about the loop. Every number comes from
    the board model, the task files or `computeStats`; a widget with nothing to count says when its data appears. */
 
+import { lessonsView } from '@harness/core/lessons';
 import { type UnitRecord, computeStats, listUnits } from '@harness/core/stats';
 import type { Status } from '@harness/core/task/transitions';
 import { type BoardModel, type CardModel, loadBoard, readHandoffs } from './board.ts';
@@ -27,6 +28,8 @@ export interface HomeModel {
   /** Per finished task; null fields stay unknown (no unit of a finished task reported usage). */
   spend: { tasks: number; reported: number; costUsd: number | null; tokens: number | null } | null;
   verdicts: { stage: string; verdict: string; count: number }[];
+  /** Lesson candidates waiting for a decision (/learning). Not board cards: not in the headline count. */
+  lessons: number;
 }
 
 /* The action a card waits on, as the reason line names it. Drafts are the human's own work: named, not hidden. */
@@ -94,6 +97,7 @@ export function loadHome(projectId: string, now = new Date()): HomeModel {
         }
       : null,
     verdicts: computeStats(units, tasks).verdicts,
+    lessons: lessonsView(board.project.path).candidates.length,
   };
 }
 

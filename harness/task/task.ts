@@ -84,18 +84,31 @@ const sha256 = (content: string | Buffer) => createHash('sha256').update(content
 export type Writer = 'human' | 'runner';
 
 /**
- * A recorded write to `<project>/.harness/tasks/T-NNN.md`: the ledger line goes first, then the atomic write, so a unit
- * that ends between the two never sees the file without its line. A unit running on another task meanwhile is then
- * not blamed for this file, and its quarantine does not undo it (pilot lesson 7). The runner records its own writes
- * too: with several units in flight, one unit's outcome or an advance step lands while another unit runs (W2).
+ * The files a recorded write may excuse: task files and the lessons file. Nothing else — a unit that rewrites the
+ * config or the trace is still blamed, whatever the ledger says.
  */
-export function saveRecordedText(path: string, text: string, who: Writer): void {
-  const project = dirname(dirname(dirname(path)));
+export const RECORDED_FILES = /^\.harness\/(tasks\/T-\d{3,}\.md|LESSONS\.md)$/;
+
+/**
+ * A recorded write to one of `RECORDED_FILES` (`rel` is relative to the project): the ledger line goes first, then the
+ * atomic write, so a unit that ends between the two never sees the file without its line. A unit running meanwhile is
+ * then not blamed for this file, and its quarantine does not undo it (pilot lesson 7). The runner records its own task
+ * writes too: with several units in flight, one unit's outcome or an advance step lands while another unit runs (W2).
+ */
+export function saveRecordedFile(project: string, rel: string, text: string, who: Writer): void {
+  if (!RECORDED_FILES.test(rel)) throw new Error(`not a recorded file: ${rel}`);
   const ledger = tracePaths(project).humanWrites;
   mkdirSync(dirname(ledger), { recursive: true });
-  const line = { path: relative(project, path), sha256: sha256(text), who, at: new Date().toISOString() };
+  const line = { path: rel, sha256: sha256(text), who, at: new Date().toISOString() };
   appendFileSync(ledger, `${JSON.stringify(line)}\n`);
-  atomicWrite(path, text);
+  mkdirSync(dirname(join(project, rel)), { recursive: true });
+  atomicWrite(join(project, rel), text);
+}
+
+/** `saveRecordedFile` for a task file given by its path (`<project>/.harness/tasks/T-NNN.md`). */
+export function saveRecordedText(path: string, text: string, who: Writer): void {
+  const project = dirname(dirname(dirname(path)));
+  saveRecordedFile(project, relative(project, path), text, who);
 }
 
 /** A human write (CLI or dashboard). */
@@ -108,9 +121,9 @@ export function saveRunnerTask(path: string, doc: TaskDoc): void {
   saveRecordedText(path, serializeTask(doc), 'runner');
 }
 
-/** True when `content` at `rel` (a task file) is exactly what a human or the runner wrote there, per the ledger. */
+/** True when `content` at `rel` (a `RECORDED_FILES` path) is exactly what a human or the runner wrote there. */
 export function isRecordedWrite(project: string, rel: string, content: Buffer | undefined): boolean {
-  if (!content || !/^\.harness\/tasks\/T-\d{3,}\.md$/.test(rel)) return false;
+  if (!content || !RECORDED_FILES.test(rel)) return false;
   const ledger = tracePaths(project).humanWrites;
   if (!existsSync(ledger)) return false;
   const hash = sha256(content);

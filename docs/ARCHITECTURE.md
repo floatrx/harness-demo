@@ -41,6 +41,7 @@ registers the project in `$HARNESS_HOME/projects.json` (default `~/.harness`).
 |---|---|---|
 | `.harness/config.json` | base branch, autonomy, limits, gate, probe, delivery, the app (defaults live in `harness/config.ts`) | yes |
 | `.harness/tasks/T-NNN.md` | one task: YAML-subset frontmatter + `##` sections | no |
+| `.harness/LESSONS.md` | lessons a human applied, rejected or withdrew; applied rules go into every unit's Memory | no |
 | `.harness/JOURNAL.md` | short notes agents leave for the next unit | no |
 | `.harness/artifacts/T-NNN/` | screenshots, the prototype picture, `qa-report.md`, `pr-body.md` | no |
 | `.harness/trace/progress.log` | one line per event, timestamped | no |
@@ -126,14 +127,20 @@ A hard stop (a broken contract or a crashed agent) moves the unit's changes into
 hard stop: exit 4, everything is put back, and the supervisor waits.
 
 Every unit starts with an empty context. `harness/memory.ts` hands it the facts earlier units left — the last
-handoffs, the branch's commits, the log tail — and then the journal tail. Measured facts come first because a note
-can be wrong.
+handoffs, the branch's commits, the log tail — then every lesson a human applied (`.harness/LESSONS.md`, in full),
+then the journal tail. Measured facts come first because a note can be wrong.
+
+Lessons (`harness/lessons.ts`) turn repeated failures into rules. Candidates come from `handoffs.jsonl`, which is
+append-only (a reopen clears a task's `parked` and `bounces`): one violation that parked two tasks, a tool denied in
+three units, a review verdict that sent one task back twice, and the notes agents leave in the journal. A human applies
+a candidate with a rule text, rejects it for good, or withdraws an applied rule later (`harness lessons`, the Learning
+page). The file is a recorded write, so a decision made while a unit runs never blames that unit.
 
 ## 5. Contracts
 
 | Contract | Where | Checks |
 |---|---|---|
-| Scope | `contracts/scope.ts` | same branch; HEAD did not move; no remote ref moved; every changed file inside the task's `scope`; under `.harness/` only the task file, its artifacts and the journal — and other task files a human wrote meanwhile (the human-write ledger) |
+| Scope | `contracts/scope.ts` | same branch; HEAD did not move; no remote ref moved; every changed file inside the task's `scope`; under `.harness/` only the task file, its artifacts and the journal — and other task files or `LESSONS.md` that a human or the runner wrote meanwhile (the write ledger), and what other units in flight own |
 | Task file | `task/write.ts` | the unit wrote only its role's sections and fields |
 | Trace | `contracts/trace.ts` | the stage's verdict (`qa: …`, `judge: …`) is in the coordinator's final result, not in a quoted specialist |
 | Plan | `runner.ts`, `contracts/closing.ts` | the plan has a `scope` and at least one `[closes]` criterion with a command; every command starts with a program the shell can call; every tagged line reads as `N. [tag]` |
@@ -224,6 +231,8 @@ CLI reads, through the core (`@harness/core`):
 - **Flow** (`/p/<id>/flow`) — the task in flight: its expected path (walked through the transition table by
   `expectedPath(kind, ctx)`), the real trail from `handoffs.jsonl`, and the coordinator with every specialist it
   dispatched. Nothing is drawn that neither file records.
+- **Learning** (`/p/<id>/learning`) — the lesson candidates with their evidence and a pre-filled rule (Apply, Reject),
+  the rules in force (Undo) and the rejected keys. The same list as `harness lessons --json`.
 - **Live** — a server-sent-events stream of one snapshot (supervisor state, the unit in flight with its agents, up
   next, recent units), pushed only when it changes.
 - **Trace, Stats, Agents** — every unit's lanes, the cost per stage and task, the registry and its checks.

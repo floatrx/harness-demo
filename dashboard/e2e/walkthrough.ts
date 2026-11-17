@@ -189,6 +189,16 @@ writeFileSync(
           result('Two questions for the human.', 12_900, 0.14),
         ],
       ],
+      /* After the delivery: T-003 parks on the same README.md change as T-004 — the repeated park Learning turns into a
+         lesson candidate. */
+      'T-003:implement': [
+        [
+          { default: true },
+          { append: 'README.md', content: '\nSearch and tags.\n' },
+          crew('implementer', [read(LIB), edit(LIB), { tool: 'Edit', file: 'README.md' }]),
+          result('Implemented.', 39_400, 0.52),
+        ],
+      ],
       'T-004:implement': [
         [
           { default: true },
@@ -306,7 +316,7 @@ try {
   page.on('pageerror', (error) => problems.push(`page error: ${error.message}`));
   /* Home and Flow are new: any console error on them fails the walkthrough. */
   page.on('console', (message) => {
-    if (message.type() === 'error' && /\/p\/[^/]+\/(home|flow)/.test(page.url()))
+    if (message.type() === 'error' && /\/p\/[^/]+\/(home|flow|learning)/.test(page.url()))
       problems.push(
         `console error on ${new URL(page.url()).pathname}: ${message.text()} (${message.location().url || 'no url'})`,
       );
@@ -373,7 +383,9 @@ try {
   await page.goto(board(projectId, '?t=T-001'));
   await page.getByTestId('plan-review').waitFor();
   await shot(page, 'plan-review');
-  await page.getByLabel('Comment for the planner').fill('Name the empty state in the plan: what shows when nothing matches.');
+  await page
+    .getByLabel('Comment for the planner')
+    .fill('Name the empty state in the plan: what shows when nothing matches.');
   await page.getByRole('button', { name: 'Request changes' }).click();
   // The review entry and `status: plan` land in one write, so the entry proves the revise before the re-plan.
   await until('the revise comment in ## Plan', () =>
@@ -413,7 +425,7 @@ try {
     { timeout: 15_000 },
   );
   await page.waitForTimeout(3000); // a few calls into the specialist, so the time strip has two roles
-  if (await page.locator('[data-testid="flow-expected"] [data-state="current"]').innerText() !== 'qa')
+  if ((await page.locator('[data-testid="flow-expected"] [data-state="current"]').innerText()) !== 'qa')
     problems.push('flow: the current node of T-001 is not qa');
   await shot(page, 'flow', 'flow');
   await page.goto(board(projectId));
@@ -508,18 +520,51 @@ try {
   const headline = (await page.getByTestId('home-headline').innerText()).trim();
   await page.goto(board(projectId, '?owner=human'));
   const filtered = await page.locator('[data-task]').count();
-  if (!headline.startsWith(filtered ? `${filtered} task` : 'Nothing waits')) problems.push(`home says "${headline}", the filtered board has ${filtered}`);
+  if (!headline.startsWith(filtered ? `${filtered} task` : 'Nothing waits'))
+    problems.push(`home says "${headline}", the filtered board has ${filtered}`);
   await page.goto(`${base}/p/${projectId}/home`);
   await page.getByTestId('home').waitFor();
   await shot(page, 'home', 'home');
 
-  // 13. The 950 px check: nothing scrolls sideways at the page level (the board scrolls inside its own lane).
+  // 13. Learning: T-003 parks on the same README.md change as T-004; the repeated park is one lesson candidate.
+  await page.goto(board(projectId));
+  await page.locator('[data-task="T-003"] [data-testid="card-action"]').click();
+  await until('T-003 to be approved', statusIs('T-003', 'ready'), 10_000);
+  // One unit at a time from the CLI (T-002's pull request goes first: it ranks highest). A park exits 1 — expected.
+  for (let step = 0; step < 4 && statusOf('T-003').status !== 'parked'; step++)
+    try {
+      execFileSync(process.execPath, [join(REPO_ROOT, 'harness', 'bin', 'harness.ts'), 'unit', '--project', dest], {
+        stdio: 'pipe',
+        env: {
+          ...process.env,
+          HARNESS_HOME: home,
+          AGENT_CMD: `node ${JSON.stringify(FAKE)}`,
+          HARNESS_FAKE_SCENARIO: scenario,
+          HARNESS_GH: `HARNESS_FAKE_GH_LOG=${JSON.stringify(join(root, 'gh.log'))} node ${JSON.stringify(FAKE_GH)}`,
+          TELEGRAM_BOT_TOKEN: '',
+        },
+      });
+    } catch (error) {
+      if ((error as { status?: number }).status !== 1) throw error;
+    }
+  if (statusOf('T-003').status !== 'parked') problems.push(`T-003 is ${statusOf('T-003').status}, not parked`);
+  await page.goto(`${base}/p/${projectId}/home`);
+  await page.getByTestId('home-lessons').waitFor();
+  await page.goto(`${base}/p/${projectId}/learning`);
+  await page.getByTestId('lesson-detail').waitFor();
+  const lessonKey = (await page.getByTestId('lesson-detail').innerText()).match(/key: (\S.*)/)?.[1] ?? '';
+  // README.md is not tracked in the example copy, so both parks read "stray file: README.md".
+  if (lessonKey !== 'park:stray file:README.md') problems.push(`learning: the open candidate is "${lessonKey}"`);
+  await shot(page, 'learning', 'learning');
+
+  // 14. The 950 px check: nothing scrolls sideways at the page level (the board scrolls inside its own lane).
   await page.setViewportSize(NARROW);
   for (const [name, url] of [
     ['projects', `${base}/projects`],
     ['home', `${base}/p/${projectId}/home`],
     ['board', board(projectId)],
     ['flow', `${base}/p/${projectId}/flow`],
+    ['learning', `${base}/p/${projectId}/learning`],
     ['live', `${base}/p/${projectId}/live`],
     ['stats', `${base}/p/${projectId}/stats`],
     ['agents', `${base}/p/${projectId}/agents`],
@@ -530,18 +575,22 @@ try {
     await shot(page, `w950-${name}`);
   }
 
-  // 14. The phone check for Home and Flow: no sideways scroll, every link and button at least 44 px tall.
+  // 15. The phone check for Home, Flow and Learning: no sideways scroll, every link and button at least 44 px tall.
   await page.setViewportSize(PHONE);
   for (const [name, url] of [
     ['home', `${base}/p/${projectId}/home`],
     ['flow', `${base}/p/${projectId}/flow`],
+    ['learning', `${base}/p/${projectId}/learning`],
   ] as const) {
     await page.goto(url);
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     if (overflow > 0) problems.push(`${name} at 390 px scrolls sideways by ${overflow} px`);
     const small = await page.evaluate(() =>
       [...document.querySelectorAll('a, button')]
-        .map((element) => ({ text: (element.textContent ?? '').trim().slice(0, 30), box: element.getBoundingClientRect() }))
+        .map((element) => ({
+          text: (element.textContent ?? '').trim().slice(0, 30),
+          box: element.getBoundingClientRect(),
+        }))
         .filter(({ box }) => box.width > 0 && box.height > 0 && box.height < 44)
         .map(({ text, box }) => `"${text}" ${Math.round(box.height)} px`),
     );

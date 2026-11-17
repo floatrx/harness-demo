@@ -57,6 +57,16 @@ export default async function HomePage({ params }: Props) {
                 ? 'The loop has what it needs. The board shows where each task is.'
                 : 'No tasks yet. Create the first one on the board.'}
           </p>
+          {/* Lessons are not board cards: their own line, outside the headline count. */}
+          {home.lessons > 0 && (
+            <Link
+              href={`/p/${id}/learning`}
+              className="mt-1 inline-flex min-h-11 items-center text-sm font-semibold text-accent hover:underline"
+              data-testid="home-lessons"
+            >
+              {home.lessons} lesson{home.lessons === 1 ? '' : 's'} to decide →
+            </Link>
+          )}
         </header>
 
         <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))] gap-3">
@@ -117,7 +127,9 @@ export default async function HomePage({ params }: Props) {
                 <p className="truncate text-[15px] font-semibold">
                   {running.task} <span className="font-normal text-muted">{running.title}</span>
                 </p>
-                <p className="mt-1 text-xs text-muted">stage {running.stage} · unit {running.unit}</p>
+                <p className="mt-1 text-xs text-muted">
+                  stage {running.stage} · unit {running.unit}
+                </p>
                 <ClaudeWorking
                   className="mt-auto pt-2 text-[13px]"
                   label={`${running.role} working`}
@@ -125,16 +137,16 @@ export default async function HomePage({ params }: Props) {
                 />
               </>
             ) : (
-              <WidgetEmpty>
-                No unit is running. {SUPERVISOR_LINE[home.supervisor]}
-              </WidgetEmpty>
+              <WidgetEmpty>No unit is running. {SUPERVISOR_LINE[home.supervisor]}</WidgetEmpty>
             )}
           </HomeWidget>
         </div>
 
         <div className="mt-3 grid grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))] gap-3">
           <HomeWidget
-            title={health.length ? `Run health · last ${health.length} unit${health.length === 1 ? '' : 's'}` : 'Run health'}
+            title={
+              health.length ? `Run health · last ${health.length} unit${health.length === 1 ? '' : 's'}` : 'Run health'
+            }
             href={`/p/${id}/live`}
             linkLabel="the live trace, every unit"
             testId="home-health"

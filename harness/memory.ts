@@ -1,10 +1,12 @@
 // Memory between units. Every unit starts in a fresh context, so the runner hands it what earlier units left:
-// measured facts first (from the trace, git and the task log — things code knows), then the tail of the journal
-// (what agents chose to write down). Facts lead because a note can be wrong and a measurement cannot.
+// measured facts first (from the trace, git and the task log — things code knows), then the lessons a human applied
+// (`.harness/LESSONS.md`, in full), then the tail of the journal (what agents chose to write down). Facts lead because a
+// note can be wrong and a measurement cannot; lessons come before notes because a human decided them.
 
 import { existsSync, readFileSync } from 'node:fs';
 import type { UnitStage } from './config.ts';
 import { branchExists, tryGit } from './git.ts';
+import { LESSONS_FILE, appliedRules } from './lessons.ts';
 import { type HandoffRecord, type TracePaths, readHandoffs } from './paths.ts';
 import { type TaskFields, listTaskFiles, loadTask } from './task/task.ts';
 
@@ -84,10 +86,14 @@ export function buildMemory(
   const journal = existsSync(paths.journal)
     ? readFileSync(paths.journal, 'utf8').trimEnd().split('\n').slice(-JOURNAL_LINES).join('\n')
     : '';
+  const lessons = appliedRules(project);
   return [
     '## Memory',
     '### Measured facts',
     facts.join('\n'),
+    lessons.length
+      ? `### Lessons (${LESSONS_FILE})\n${lessons.map((lesson) => `- ${lesson.id}: ${lesson.text.replace(/\n+/g, ' ')}`).join('\n')}`
+      : '',
     board.length ? `### Other tasks on the board (id · status · title)\n${board.join('\n')}` : '',
     log.length ? `### Task log (last ${log.length} lines)\n${log.join('\n')}` : '',
     journal ? `### Journal (last ${JOURNAL_LINES} lines of .harness/JOURNAL.md)\n${journal}` : '',

@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/cn';
 import { HarnessMark, RailIcon, type RailIconName } from './rail-icons';
 
-export type RailSection = 'home' | 'board' | 'flow' | 'live' | 'stats' | 'agents' | 'projects';
+export type RailSection = 'home' | 'board' | 'flow' | 'learning' | 'live' | 'stats' | 'agents' | 'projects';
 
 interface Props {
   projectId: string | null;
@@ -13,7 +13,7 @@ interface Props {
 
 /* /p/<id> → board, /p/<id>/home → home, /p/<id>/live → live, … ; anything else → projects. */
 const sectionOf = (pathname: string): RailSection => {
-  const match = /^\/p\/[^/]+(?:\/(home|flow|live|stats|agents))?/.exec(pathname);
+  const match = /^\/p\/[^/]+(?:\/(home|flow|learning|live|stats|agents))?/.exec(pathname);
   return match ? ((match[1] as RailSection | undefined) ?? 'board') : 'projects';
 };
 
@@ -21,6 +21,7 @@ const ITEMS: { section: RailSection; label: string; href: (id: string) => string
   { section: 'home', label: 'Home', href: (id) => `/p/${id}/home`, icon: 'home' },
   { section: 'board', label: 'Board', href: (id) => `/p/${id}`, icon: 'board' },
   { section: 'flow', label: 'Flow', href: (id) => `/p/${id}/flow`, icon: 'flow' },
+  { section: 'learning', label: 'Learning', href: (id) => `/p/${id}/learning`, icon: 'learning' },
   { section: 'live', label: 'Live trace', href: (id) => `/p/${id}/live`, icon: 'live' },
   { section: 'stats', label: 'Stats', href: (id) => `/p/${id}/stats`, icon: 'stats' },
   { section: 'agents', label: 'Agents', href: (id) => `/p/${id}/agents`, icon: 'agents' },

@@ -11,10 +11,11 @@ import { baseAgentsDir } from './agents.ts';
 import { join } from 'node:path';
 import { currentBranch, dirty, git } from './git.ts';
 import { worktreePath } from './worktree.ts';
-import { type UnitResult, runUnit } from './runner.ts';
+import { type UnitResult, previewUnit, runUnit } from './runner.ts';
+import { applyLesson, rejectLesson, withdrawLesson } from './lessons.ts';
 import { portBusy } from './app.ts';
 import { requestStop, supervise } from './supervise.ts';
-import { listRunning, tracePaths } from './paths.ts';
+import { appendHandoff, listRunning, tracePaths } from './paths.ts';
 import { type Sandbox, makeSandbox, readLog, seedTask } from './testkit/sandbox.ts';
 import { accept, addReview, answerQuestion, approve, comment, reopen, stamp, submit } from './task/write.ts';
 import { listTaskFiles, loadTask, saveTask } from './task/task.ts';
@@ -905,7 +906,7 @@ export const CASES: Case[] = [
       }),
   },
   {
-    name: 'parallel: a unit parked meanwhile leaves the other unit\'s task file, artifacts and branch alone',
+    name: "parallel: a unit parked meanwhile leaves the other unit's task file, artifacts and branch alone",
     run: () =>
       withSandbox(PARALLEL, async (sandbox) => {
         seedTask(sandbox, { ...READY, id: 'T-001' });
@@ -931,10 +932,16 @@ export const CASES: Case[] = [
         const lines = progressLines(sandbox);
         const parked = lineOf(lines, /· T-001 · exit 1 · parked/);
         const otherEnd = exitOf(lines, 'T-002', 'implement');
-        expect(parked >= 0 && parked < otherEnd, `T-001 parked at line ${parked}, T-002 implement ended at ${otherEnd}`);
+        expect(
+          parked >= 0 && parked < otherEnd,
+          `T-001 parked at line ${parked}, T-002 implement ended at ${otherEnd}`,
+        );
         const one = sandbox.task('T-001').fields;
         const two = sandbox.task('T-002');
-        expect(one.status === 'parked' && /out-of-scope edit: README.md/.test(one.parked ?? ''), `T-001: ${one.parked}`);
+        expect(
+          one.status === 'parked' && /out-of-scope edit: README.md/.test(one.parked ?? ''),
+          `T-001: ${one.parked}`,
+        );
         expect(two.fields.status === 'done', `T-002 is ${two.fields.status} (${two.fields.parked ?? ''})`);
         expect(!/quarantine/.test(readLog(sandbox, 'T-002')), 'T-002 was quarantined');
         const note = join(sandbox.project, '.harness/artifacts/T-002/note.txt');
@@ -1047,15 +1054,66 @@ export const CASES: Case[] = [
         const first = exitOf(lines, 'T-001', 'qa');
         const after = startOf(lines, 'T-001', 'judge');
         const end = exitOf(lines, 'T-002', 'qa');
-        expect(second >= 0 && second < first, `the qa units did not overlap (T-002 start ${second}, T-001 end ${first})`);
-        expect(after > first && after < end, `no step started while T-002's app ran (judge ${after}, T-002 end ${end})`);
-        expect(!lines.some((line) => /stopped an orphaned app/.test(line)), 'a live unit\'s app was stopped as an orphan');
+        expect(
+          second >= 0 && second < first,
+          `the qa units did not overlap (T-002 start ${second}, T-001 end ${first})`,
+        );
+        expect(
+          after > first && after < end,
+          `no step started while T-002's app ran (judge ${after}, T-002 end ${end})`,
+        );
+        expect(
+          !lines.some((line) => /stopped an orphaned app/.test(line)),
+          "a live unit's app was stopped as an orphan",
+        );
         for (const id of ['T-001', 'T-002']) {
           const file = join(sandbox.project, '.harness/artifacts', id, 'app.txt');
           const seen = existsSync(file) ? readFileSync(file, 'utf8') : '(no file)';
           expect(/^http:\/\/localhost:\d+/.test(seen), `${id}'s qa unit saw no app: ${seen.split('\n')[0]}`);
         }
         return `T-001 judge started (line ${after}) while T-002 qa ran · each qa unit reached its own app · no orphan stop`;
+      }),
+  },
+  {
+    name: 'lessons: an Apply while a unit runs parks nothing; the next prompt carries the rule, a withdrawn one not',
+    run: () =>
+      withSandbox({}, async (sandbox) => {
+        const paths = tracePaths(sandbox.project);
+        // Two earlier tasks parked for the same violation: one candidate.
+        for (const [task, unit] of [
+          ['T-008', 1],
+          ['T-009', 2],
+        ] as const)
+          appendHandoff(paths, {
+            task,
+            stage: 'implement',
+            unit,
+            from: 'implementing',
+            to: 'parked',
+            exit: 1,
+            reason: `implement unit ${unit}: stray file: notes.txt`,
+          });
+        const key = 'park:stray file:notes.txt';
+        const id = seedTask(sandbox, READY);
+        sandbox.scenario({ steps: { implement: [[{ sleep: 700 }, { default: true }] as never] } });
+        const run = runUnit(sandbox.project, sandbox.agent);
+        const end = Date.now() + 10_000;
+        while (!listRunning(paths).length && Date.now() < end) await new Promise((r) => setTimeout(r, 20));
+        expect(listRunning(paths).length === 1, 'the unit never started');
+        const entry = applyLesson(sandbox.project, key, 'Never leave a new file outside the task scope.');
+        const result = await run;
+        const task = sandbox.task(id).fields;
+        expect(
+          result.exit === 0 && task.status === 'qa',
+          `exit ${result.exit}, ${task.status}: ${task.parked ?? result.message}`,
+        );
+        const rule = /### Lessons \(\.harness\/LESSONS\.md\)\n- L-001: Never leave a new file outside the task scope\./;
+        expect(rule.test(previewUnit(sandbox.project, id).prompt), 'the preview has no Lessons section with the rule');
+        withdrawLesson(sandbox.project, entry.id);
+        expect(!/### Lessons/.test(previewUnit(sandbox.project, id).prompt), 'a withdrawn rule is still in the prompt');
+        rejectLesson(sandbox.project, key);
+        expect(!/### Lessons/.test(previewUnit(sandbox.project, id).prompt), 'a rejected entry reached the prompt');
+        return `applied mid-unit (${entry.id}) · unit exit 0 → ${task.status} · preview shows the rule; withdrawn or rejected, it does not`;
       }),
   },
   {

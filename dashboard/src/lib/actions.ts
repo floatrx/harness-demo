@@ -29,12 +29,16 @@ import {
   revise,
   submit,
 } from '@harness/core/task/write';
+import { LessonError, applyLesson, rejectLesson, withdrawLesson } from '@harness/core/lessons';
 import { ProjectNotFound, findProject } from './board.ts';
 
 export const MUTATION_HEADER = 'x-harness';
 
 export const TASK_ACTIONS = ['submit', 'approve', 'revise', 'accept', 'comment', 'answer', 'reopen'] as const;
 export type TaskAction = (typeof TASK_ACTIONS)[number];
+
+export const LESSON_ACTIONS = ['apply', 'reject', 'withdraw'] as const;
+export type LessonAction = (typeof LESSON_ACTIONS)[number];
 
 export interface AnswerInput {
   id: string;
@@ -108,6 +112,7 @@ function errorResponse(error: unknown): Response {
   if (error instanceof ProjectNotFound) return json(404, { error: error.message });
   if (error instanceof ProjectError) return json(400, { error: error.message });
   if (error instanceof TransitionError || error instanceof OwnershipError) return json(409, { error: error.message });
+  if (error instanceof LessonError) return json(409, { error: error.message });
   throw error;
 }
 
@@ -142,6 +147,33 @@ export async function handleTaskAction(
     saveHumanTask(file, next);
     const fields = loadTask(file).fields;
     return json(200, { id: fields.id, status: fields.status, prototype: fields.prototype });
+  } catch (error) {
+    return errorResponse(error);
+  }
+}
+
+/**
+ * POST /api/p/:id/lessons/:action — apply or reject a candidate (`{ key, text }`), withdraw an applied rule (`{ id }`).
+ * Guards: the header → the project → the key is an open candidate, or the id an applied rule (the core checks both) →
+ * a non-empty rule text for apply. Allowed while units run: LESSONS.md is a recorded write, so no unit is blamed.
+ */
+export async function handleLessonAction(request: Request, projectId: string, action: string): Promise<Response> {
+  try {
+    guardHeader(request);
+    if (!(LESSON_ACTIONS as readonly string[]).includes(action)) throw new HttpError(404, `unknown action ${action}`);
+    const project = findProject(projectId);
+    const body = await readBody(request);
+    const key = typeof body.key === 'string' ? body.key : '';
+    const text = typeof body.text === 'string' ? body.text.trim() : '';
+    switch (action as LessonAction) {
+      case 'apply':
+        if (!text) throw new HttpError(400, 'a lesson needs its rule text');
+        return json(200, applyLesson(project.path, key, text));
+      case 'reject':
+        return json(200, rejectLesson(project.path, key));
+      case 'withdraw':
+        return json(200, withdrawLesson(project.path, typeof body.id === 'string' ? body.id : ''));
+    }
   } catch (error) {
     return errorResponse(error);
   }
