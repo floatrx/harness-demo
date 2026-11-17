@@ -9,7 +9,7 @@
   "packageManager": "pnpm@12.8.1",
   "scripts": {
     "harness": "node harness/bin/harness.ts",
-    "test": "node --test harness/ dashboard/",
+    "test": "node --test 'harness/**/*.test.ts' 'dashboard/src/**/*.test.ts'",
     "self-test": "node harness/bin/harness.ts self-test",
     "typecheck": "pnpm -r exec tsc -b --force",
     "lint": "eslint .",

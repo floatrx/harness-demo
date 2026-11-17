@@ -10,7 +10,7 @@ over task files in a project's `.harness/tasks/`. Code-owned contracts check eve
 | Install | `pnpm install` (pnpm only — never npm or yarn) |
 | Typecheck | `pnpm typecheck` (= `pnpm -r exec tsc -b --force`: the dashboard's incremental build does not see changes in `harness/`, so a plain `-b` can report green on a broken dashboard) |
 | Lint | `pnpm lint` |
-| Tests | `node --test harness/ dashboard/` (core + dashboard route handlers) |
+| Tests | `node --test 'harness/**/*.test.ts' 'dashboard/src/**/*.test.ts'` (core + dashboard route handlers) |
 | Contract self-test | `node harness/bin/harness.ts self-test` |
 | CLI help | `node harness/bin/harness.ts --help` |
 | Provenance check | `pnpm provenance` |

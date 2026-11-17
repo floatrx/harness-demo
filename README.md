@@ -228,7 +228,7 @@ docs/         ARCHITECTURE.md and the dashboard screenshots
 ## Development
 
 ```bash
-pnpm typecheck && pnpm lint && node --test harness/ dashboard/ && node harness/bin/harness.ts self-test
+pnpm typecheck && pnpm lint && node --test 'harness/**/*.test.ts' 'dashboard/src/**/*.test.ts' && node harness/bin/harness.ts self-test
 pnpm -C dashboard build && pnpm dashboard:e2e   # the dashboard walkthrough in Chrome (--docs rewrites docs/screenshots/)
 pnpm provenance                                 # this repository is public: no foreign names, no token shapes
 ```
