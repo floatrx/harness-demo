@@ -10,7 +10,7 @@ checks**, not by instructions the agent may ignore.
 - **Core** — a zero-dependency Node runner and supervisor; one fresh `claude -p` context per unit of work.
 - **Agents** — a coordinator per stage delegates to an open registry of specialists (`writer`, `explorer`, `planner`,
   `designer`, `tester`, `implementer`, `debugger`, `qa`, `judge`, and any you add).
-- **Dashboard** — a local Next.js control plane: projects, board, interview, live trace, stats, agents.
+- **Dashboard** — a local Next.js control plane: projects, home, board, flow, interview, live trace, stats, agents.
 - **Browser** — optional: the runner starts your app for QA and the designer, who look at it through Playwright MCP.
 - **Delivery** — the runner pushes the task branch and opens the pull request. Nothing ever merges it.
 - **Telegram** — optional one-way pings when the loop needs you or finishes something.

@@ -39,6 +39,7 @@
   --color-line-soft: #1d1d1d;
   --color-accent-line: rgb(217 119 87 / 0.5);
   --color-track: #262626;
+  --color-warn: #c9a227;
   --color-track-past: #666666;
   --radius-panel: 10px;
   --radius-card: 8px;
@@ -139,11 +140,35 @@ body {
   animation: claude-breathe 2.4s ease-in-out infinite;
 }
 
+/* The edge into the unit in flight: dashes that move toward it. Only the unit in flight moves continuously. */
+@keyframes flow-dash {
+  to {
+    background-position: 12px 0;
+  }
+}
+
+.flow-dash {
+  background: repeating-linear-gradient(90deg, var(--accent) 0 4px, transparent 4px 8px);
+  background-size: 12px 1px;
+  animation: flow-dash 0.6s linear infinite;
+}
+
+/* Reduced motion, app-wide: nothing moves. The spinner keeps its still ✻ (the walkthrough's screenshots rely on it),
+   the shimmer becomes plain accent text. `motion` components follow the same setting through MotionRoot. */
 @media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
   .claude-spinner::before,
   .claude-shimmer,
-  .claude-breathe {
-    animation: none;
+  .claude-breathe,
+  .flow-dash {
+    animation: none !important;
   }
   .claude-shimmer {
     color: var(--accent);

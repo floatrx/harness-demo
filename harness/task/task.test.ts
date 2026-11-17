@@ -21,6 +21,7 @@ import {
   STATUSES,
   type TransitionTask,
   canTransition,
+  expectedPath,
   findTransition,
   humanTargets,
 } from './transitions.ts';
@@ -262,6 +263,15 @@ describe('transitions', () => {
     const waiting = { ...base, status: 'needs-input' as const, resume: 'plan' as const, openQuestions: 1 };
     assert.equal(findTransition(waiting, 'agent', 'answered'), null);
     assert.equal(findTransition({ ...waiting, openQuestions: 0 }, 'agent', 'answered')?.target, 'plan');
+  });
+
+  test('the expected path follows the kind and the context', () => {
+    const logic = ['draft', 'spec', 'plan', 'planned', 'ready', 'implementing', 'qa', 'judge', 'done'];
+    assert.deepEqual(expectedPath('logic'), logic);
+    assert.deepEqual(expectedPath(null), logic);
+    assert.deepEqual(expectedPath('ui'), [...logic.slice(0, 4), 'prototype', ...logic.slice(4)]);
+    const ctx = { autonomy: 'gated' as const, mergeQaJudge: true, bounceCap: 2, deliverPr: true };
+    assert.deepEqual(expectedPath('logic', ctx), [...logic.filter((status) => status !== 'judge'), 'delivered']);
   });
 
   test('reopen returns to parkedFrom', () => {

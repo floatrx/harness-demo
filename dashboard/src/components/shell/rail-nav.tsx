@@ -5,20 +5,22 @@ import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/cn';
 import { HarnessMark, RailIcon, type RailIconName } from './rail-icons';
 
-export type RailSection = 'board' | 'live' | 'stats' | 'agents' | 'projects';
+export type RailSection = 'home' | 'board' | 'flow' | 'live' | 'stats' | 'agents' | 'projects';
 
 interface Props {
   projectId: string | null;
 }
 
-/* /p/<id> → board, /p/<id>/live → live, … ; anything else → projects. */
+/* /p/<id> → board, /p/<id>/home → home, /p/<id>/live → live, … ; anything else → projects. */
 const sectionOf = (pathname: string): RailSection => {
-  const match = /^\/p\/[^/]+(?:\/(live|stats|agents))?/.exec(pathname);
+  const match = /^\/p\/[^/]+(?:\/(home|flow|live|stats|agents))?/.exec(pathname);
   return match ? ((match[1] as RailSection | undefined) ?? 'board') : 'projects';
 };
 
 const ITEMS: { section: RailSection; label: string; href: (id: string) => string; icon: RailIconName }[] = [
+  { section: 'home', label: 'Home', href: (id) => `/p/${id}/home`, icon: 'home' },
   { section: 'board', label: 'Board', href: (id) => `/p/${id}`, icon: 'board' },
+  { section: 'flow', label: 'Flow', href: (id) => `/p/${id}/flow`, icon: 'flow' },
   { section: 'live', label: 'Live trace', href: (id) => `/p/${id}/live`, icon: 'live' },
   { section: 'stats', label: 'Stats', href: (id) => `/p/${id}/stats`, icon: 'stats' },
   { section: 'agents', label: 'Agents', href: (id) => `/p/${id}/agents`, icon: 'agents' },
@@ -26,7 +28,7 @@ const ITEMS: { section: RailSection; label: string; href: (id: string) => string
 
 const itemClass = (isActive: boolean) =>
   cn(
-    'grid size-9 place-items-center rounded-[9px] text-muted transition-colors hover:bg-surface-secondary hover:text-foreground',
+    'grid size-11 place-items-center md:size-9 rounded-[9px] text-muted transition-colors hover:bg-surface-secondary hover:text-foreground',
     isActive && 'bg-accent-soft text-accent hover:bg-accent-soft hover:text-accent',
   );
 
@@ -37,7 +39,7 @@ export const RailNav = ({ projectId }: Props) => {
       className="sticky top-0 flex h-screen flex-col items-center gap-1.5 border-r border-line-soft bg-rail py-3.5"
       aria-label="Main"
     >
-      <Link href="/projects" className="mb-3 text-accent">
+      <Link href="/projects" aria-label="All projects" className="mb-1 grid size-11 place-items-center text-accent">
         <HarnessMark />
       </Link>
       {projectId &&

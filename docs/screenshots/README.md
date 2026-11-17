@@ -9,6 +9,8 @@ the fake agent spends nothing and reports made-up usage. Durations are real.
 | File                   | Step                                                                                               |
 | ---------------------- | -------------------------------------------------------------------------------------------------- |
 | `projects.png`         | the project list while a unit runs                                                                 |
+| `home.png`             | after delivery: what waits for you, done tasks, run health, spend per done task, verdicts          |
+| `flow.png`             | T-001's qa unit in flight: expected path, the real trail, the coordinator and its specialist       |
 | `board.png`            | a card in QA with its agent working, a question, a plan to approve, a parked task, the Live dock   |
 | `task-questions.png`   | the writer's two questions for T-003, lettered options, the recommended one first                  |
 | `prototype-review.png` | T-001's first prototype round: Accept or comment                                                   |

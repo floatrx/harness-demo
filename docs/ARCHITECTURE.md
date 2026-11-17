@@ -216,7 +216,14 @@ empty token switches notifications off. A failed send never fails a unit.
 `dashboard/` is a Next.js app bound to `127.0.0.1`. Server modules in `dashboard/src/lib/` read the same files the
 CLI reads, through the core (`@harness/core`):
 
-- **Board** — the columns are statuses; a drag is allowed only along a human transition.
+- **Home** (`/p/<id>/home`, the first rail item) — what waits for the human, and the loop in five numbers: done tasks
+  with a 14-day sparkline, the unit running now, run health of the last 20 units, spend per done task, verdicts. Each
+  number comes from the task files or `computeStats`; a widget with nothing to count says when its data appears.
+- **Board** (`/p/<id>`) — the columns are statuses; a drag is allowed only along a human transition. `?owner=human`
+  and `?status=done,delivered` filter it, so a Home widget links to exactly what it counts.
+- **Flow** (`/p/<id>/flow`) — the task in flight: its expected path (walked through the transition table by
+  `expectedPath(kind, ctx)`), the real trail from `handoffs.jsonl`, and the coordinator with every specialist it
+  dispatched. Nothing is drawn that neither file records.
 - **Live** — a server-sent-events stream of one snapshot (supervisor state, the unit in flight with its agents, up
   next, recent units), pushed only when it changes.
 - **Trace, Stats, Agents** — every unit's lanes, the cost per stage and task, the registry and its checks.
@@ -225,6 +232,9 @@ CLI reads, through the core (`@harness/core`):
   `harness run` detached with the dashboard's own environment; Pause, Resume and Stop write the same control files
   the CLI writes. The Start button and the server's first terminal line name who a Start runs (a stand-in, or real
   `claude -p` on a subscription or an API key).
+- **Motion** — one tokens file (`dashboard/src/lib/motion.config.ts`). Only the unit in flight moves continuously;
+  a finished unit's lane flashes and folds once; numbers count up on first render only. `prefers-reduced-motion`
+  stops all of it, in CSS and in `motion` (`MotionRoot`).
 
 ## 11. Security
 

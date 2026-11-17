@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import { Onest } from 'next/font/google';
 import '@/styles/global.css';
+import { MotionRoot } from '@/components/ui/motion-root';
 
 const onest = Onest({ subsets: ['latin', 'cyrillic'], variable: '--font-onest' });
 
@@ -17,7 +18,9 @@ interface Props {
 export default function RootLayout({ children }: Props) {
   return (
     <html lang="en" className="dark" suppressHydrationWarning>
-      <body className={`${onest.variable} bg-background font-sans text-foreground`}>{children}</body>
+      <body className={`${onest.variable} bg-background font-sans text-foreground`}>
+        <MotionRoot>{children}</MotionRoot>
+      </body>
     </html>
   );
 }

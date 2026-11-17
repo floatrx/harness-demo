@@ -1,4 +1,6 @@
+import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import { isStatus } from '@harness/core/task/transitions';
 import { cn } from '@/lib/cn';
 import { ProjectNotFound, loadBoard } from '@/lib/board';
 import { liveSnapshot } from '@/lib/live';
@@ -15,12 +17,31 @@ export const dynamic = 'force-dynamic';
 
 interface Props {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ t?: string }>;
+  searchParams: Promise<{ t?: string; owner?: string; status?: string }>;
+}
+
+/* A shareable board filter: `?owner=human` keeps the cards that wait for the human (the cards Home counts),
+   `?status=done,delivered` keeps those columns. Unknown values are ignored. */
+function boardFilter(owner?: string, status?: string) {
+  const statuses = (status ?? '').split(',').filter(isStatus);
+  if (owner !== 'human' && !statuses.length) return null;
+  const label = [
+    owner === 'human' ? 'waiting for you' : null,
+    statuses.length ? `in ${statuses.join(' or ')}` : null,
+  ]
+    .filter(Boolean)
+    .join(', ');
+  return {
+    label,
+    keep: (card: { owner: string | null; action: string | null; status: string }) =>
+      (owner !== 'human' || (card.owner === 'you' && !!card.action)) &&
+      (!statuses.length || (statuses as string[]).includes(card.status)),
+  };
 }
 
 export default async function BoardPage({ params, searchParams }: Props) {
   const { id } = await params;
-  const { t } = await searchParams;
+  const { t, owner, status } = await searchParams;
   let board;
   try {
     board = loadBoard(id);
@@ -29,6 +50,8 @@ export default async function BoardPage({ params, searchParams }: Props) {
     throw error;
   }
   const task = t ? loadTaskDetail(id, t) : null;
+  const filter = boardFilter(owner, status);
+  const cards = filter ? board.cards.filter(filter.keep) : board.cards;
   return (
     <LiveProvider projectId={id} initial={liveSnapshot(id)}>
       <div
@@ -66,8 +89,28 @@ export default async function BoardPage({ params, searchParams }: Props) {
               </ul>
             </div>
           )}
-          {board.cards.length ? (
-            <BoardView cards={board.cards} projectId={id} selectedId={task?.id ?? null} />
+          {filter && (
+            <p
+              className="mb-3 flex flex-wrap items-center gap-x-2 rounded-card border border-line-soft bg-surface px-3 py-2 text-[13px]"
+              data-testid="board-filter"
+            >
+              <span>
+                <b className="font-semibold">
+                  {cards.length} of {board.cards.length}
+                </b>{' '}
+                <span className="text-muted">tasks · {filter.label}</span>
+              </span>
+              <Link href={`/p/${id}`} className="ml-auto inline-flex min-h-11 items-center font-semibold text-accent hover:underline">
+                Show all
+              </Link>
+            </p>
+          )}
+          {filter && board.cards.length && !cards.length ? (
+            <p className="rounded-panel border border-dashed border-border px-6 py-10 text-center text-sm text-muted" data-testid="board-filter-empty">
+              No task matches this filter right now.
+            </p>
+          ) : board.cards.length ? (
+            <BoardView cards={cards} projectId={id} selectedId={task?.id ?? null} />
           ) : (
             <section
               className="grid place-items-center rounded-panel border border-dashed border-border px-6 py-16 text-center"

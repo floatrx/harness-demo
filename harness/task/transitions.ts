@@ -186,6 +186,48 @@ export function canTransition(
   );
 }
 
+/* The moves a task makes when every stage passes the first time: no question, no bounce, no park. */
+const HAPPY: readonly { actor: Actor; action: string }[] = [
+  { actor: 'human', action: 'submit' },
+  { actor: 'agent', action: 'spec-done' },
+  { actor: 'agent', action: 'plan-done' },
+  { actor: 'human', action: 'approve' },
+  { actor: 'human', action: 'accept' },
+  { actor: 'agent', action: 'start' },
+  { actor: 'agent', action: 'implemented' },
+  { actor: 'agent', action: 'qa-pass' },
+  { actor: 'agent', action: 'confirmed' },
+  { actor: 'agent', action: 'delivered' },
+];
+
+/**
+ * The statuses a task of this kind passes from draft to its end under `ctx`, walked through the transition table:
+ * `kind: ui` adds prototype, `mergeQaJudge` drops judge, `deliverPr` adds delivered. The Flow page draws it.
+ */
+export function expectedPath(kind: Kind | null, ctx: TransitionContext = DEFAULT_CONTEXT): Status[] {
+  // The prototype round is simulated as finished, so its `accept` fires.
+  let task: TransitionTask = {
+    status: 'draft',
+    kind,
+    resume: null,
+    prototype: 'review',
+    parkedFrom: null,
+    bounces: 0,
+    openQuestions: 0,
+  };
+  const path: Status[] = [task.status];
+  while (path.length <= STATUSES.length) {
+    const next = HAPPY.map(({ actor, action }) => findTransition(task, actor, action, ctx)?.target).find(
+      (target) => target && target !== task.status,
+    );
+    // `delivered` has no guard (only the runner fires it, and only with delivery on): without it, done is the end.
+    if (!next || (next === 'delivered' && !ctx.deliverPr)) break;
+    path.push(next);
+    task = { ...task, status: next };
+  }
+  return path;
+}
+
 /** Targets a human can drag this card to (the board uses this). */
 export function humanTargets(task: TransitionTask, ctx: TransitionContext = DEFAULT_CONTEXT): Status[] {
   return HUMAN_TRANSITIONS.flatMap((transition) => {

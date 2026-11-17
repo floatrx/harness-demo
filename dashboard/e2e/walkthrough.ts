@@ -53,6 +53,7 @@ const OUT = resolve(args.out ?? join(DASHBOARD, 'e2e', 'shots'));
 const DOCS = join(REPO_ROOT, 'docs', 'screenshots');
 const WIDE = { width: 1440, height: 900 };
 const NARROW = { width: 950, height: 800 };
+const PHONE = { width: 390, height: 844 };
 
 if (!existsSync(join(DASHBOARD, '.next', 'BUILD_ID'))) {
   console.error('no production build — run `pnpm -C dashboard build` first');
@@ -303,6 +304,13 @@ try {
   /* The docs site shows the named set on retina screens: --docs renders at device scale 2 (2880 × 1800). */
   const page = await browser.newPage({ viewport: WIDE, reducedMotion: 'reduce', deviceScaleFactor: args.docs ? 2 : 1 });
   page.on('pageerror', (error) => problems.push(`page error: ${error.message}`));
+  /* Home and Flow are new: any console error on them fails the walkthrough. */
+  page.on('console', (message) => {
+    if (message.type() === 'error' && /\/p\/[^/]+\/(home|flow)/.test(page.url()))
+      problems.push(
+        `console error on ${new URL(page.url()).pathname}: ${message.text()} (${message.location().url || 'no url'})`,
+      );
+  });
 
   // 1. Add a project.
   await page.goto(`${base}/projects`);
@@ -396,6 +404,18 @@ try {
     () => readRunning(paths)?.task === 'T-001' && readRunning(paths)?.stage === 'qa',
     180_000,
   );
+  /* Flow first: the lane needs the unit in flight, and the qa specialist on it. */
+  await page.goto(`${base}/p/${projectId}/flow`);
+  await page.getByTestId('flow-lane').waitFor();
+  await page.waitForFunction(
+    () => !!document.querySelector('[data-testid="flow-role"][data-coordinator="false"][data-state="running"]'),
+    null,
+    { timeout: 15_000 },
+  );
+  await page.waitForTimeout(3000); // a few calls into the specialist, so the time strip has two roles
+  if (await page.locator('[data-testid="flow-expected"] [data-state="current"]').innerText() !== 'qa')
+    problems.push('flow: the current node of T-001 is not qa');
+  await shot(page, 'flow', 'flow');
   await page.goto(board(projectId));
   /* The dock shows the qa specialist with the tool in its hand, a few seconds into the unit. */
   await page.waitForFunction(
@@ -482,11 +502,24 @@ try {
   if (!/PR next/.test(pending)) problems.push('the done card T-002 does not say "PR next"');
   await shot(page, 'delivered', 'delivered');
 
-  // 12. The 950 px check: nothing scrolls sideways at the page level (the board scrolls inside its own lane).
+  // 12. Home after the run: what waits, done tasks, run health, verdicts. Its waiting count is the board's.
+  await page.goto(`${base}/p/${projectId}/home`);
+  await page.getByTestId('home').waitFor();
+  const headline = (await page.getByTestId('home-headline').innerText()).trim();
+  await page.goto(board(projectId, '?owner=human'));
+  const filtered = await page.locator('[data-task]').count();
+  if (!headline.startsWith(filtered ? `${filtered} task` : 'Nothing waits')) problems.push(`home says "${headline}", the filtered board has ${filtered}`);
+  await page.goto(`${base}/p/${projectId}/home`);
+  await page.getByTestId('home').waitFor();
+  await shot(page, 'home', 'home');
+
+  // 13. The 950 px check: nothing scrolls sideways at the page level (the board scrolls inside its own lane).
   await page.setViewportSize(NARROW);
   for (const [name, url] of [
     ['projects', `${base}/projects`],
+    ['home', `${base}/p/${projectId}/home`],
     ['board', board(projectId)],
+    ['flow', `${base}/p/${projectId}/flow`],
     ['live', `${base}/p/${projectId}/live`],
     ['stats', `${base}/p/${projectId}/stats`],
     ['agents', `${base}/p/${projectId}/agents`],
@@ -495,6 +528,25 @@ try {
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     if (overflow > 0) problems.push(`${name} at 950 px scrolls sideways by ${overflow} px`);
     await shot(page, `w950-${name}`);
+  }
+
+  // 14. The phone check for Home and Flow: no sideways scroll, every link and button at least 44 px tall.
+  await page.setViewportSize(PHONE);
+  for (const [name, url] of [
+    ['home', `${base}/p/${projectId}/home`],
+    ['flow', `${base}/p/${projectId}/flow`],
+  ] as const) {
+    await page.goto(url);
+    const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    if (overflow > 0) problems.push(`${name} at 390 px scrolls sideways by ${overflow} px`);
+    const small = await page.evaluate(() =>
+      [...document.querySelectorAll('a, button')]
+        .map((element) => ({ text: (element.textContent ?? '').trim().slice(0, 30), box: element.getBoundingClientRect() }))
+        .filter(({ box }) => box.width > 0 && box.height > 0 && box.height < 44)
+        .map(({ text, box }) => `"${text}" ${Math.round(box.height)} px`),
+    );
+    if (small.length) problems.push(`${name} at 390 px: tap targets under 44 px: ${small.join(', ')}`);
+    await shot(page, `w390-${name}`);
   }
 } catch (error) {
   problems.push((error as Error).message);

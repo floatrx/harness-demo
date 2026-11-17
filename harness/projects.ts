@@ -41,8 +41,8 @@ export class ProjectError extends Error {
 
 /**
  * Lines the project's .gitignore must carry: loop state is local, never versioned. Task files and the journal are
- * included: the runner writes them while it switches between the base and task branches, and a versioned copy that
- * differs between branches would make a checkout fail. `config.json` stays versioned.
+ * included: one copy lives in the main checkout and every task worktree links to it (`WORKTREE_LINKS`), so every unit
+ * reads and writes the same file whatever branch it works on. `config.json` stays versioned.
  */
 export const IGNORED = [
   '.harness/trace/',
