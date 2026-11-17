@@ -9,10 +9,10 @@
     "build": "next build",
     "start": "next start -p 3100",
     "typecheck": "tsc -b",
-    "test": "node --test src/"
+    "test": "node --test 'src/**/*.test.ts'"
   },
   "dependencies": {
-    "next": "^16.4.3",
+    "next": "^16.4.6",
     "react": "^19.3.1",
     "react-dom": "^19.3.1"
   },
