@@ -10,7 +10,7 @@ import { type RunResult, run, tryGit } from './git.ts';
 import { type HandoffRecord, type TracePaths, appendHandoff, readHandoffs } from './paths.ts';
 import { scrubSecrets } from './secrets.ts';
 import { criterionLabel, getSection, parseCriteria, setField } from './task/parse.ts';
-import { type LoadedTask, saveTask } from './task/task.ts';
+import { type LoadedTask, saveRunnerTask } from './task/task.ts';
 import { appendLog, moveTo } from './task/write.ts';
 
 export interface DeliverOptions {
@@ -147,7 +147,7 @@ function park(task: LoadedTask, paths: TracePaths, reason: string): DeliverResul
   setField(doc, 'parked', `deliver: ${reason}`);
   setField(doc, 'parkedFrom', 'done');
   moveTo(doc, 'parked', 'runner · deliver');
-  saveTask(task.path, doc);
+  saveRunnerTask(task.path, doc);
   appendHandoff(paths, { task: fields.id, stage: 'deliver', from: 'done', to: 'parked', exit: 1, reason });
   return { ok: false, pr: null, reason };
 }
@@ -204,7 +204,7 @@ export function deliverTask(
   setField(doc, 'pr', url);
   appendLog(doc, `  ↳ pull request ${url}`);
   moveTo(doc, 'delivered', 'runner · deliver');
-  saveTask(task.path, doc);
+  saveRunnerTask(task.path, doc);
   appendHandoff(paths, { task: fields.id, stage: 'deliver', from: 'done', to: 'delivered', exit: 0, pr: url });
   return { ok: true, pr: url, reason: null };
 }

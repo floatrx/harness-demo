@@ -2,11 +2,11 @@
    draws only what handoffs.jsonl and the unit trace record. */
 
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
-import { appendHandoff, tracePaths } from '@harness/core/paths';
+import { appendHandoff, markRunning, tracePaths } from '@harness/core/paths';
 import { addProject } from '@harness/core/projects';
 import { runUnit } from '@harness/core/runner';
 import { projectStats } from '@harness/core/stats';
@@ -93,9 +93,9 @@ test('done, spend and verdicts match harness stats', () => {
 test('flow: the lane follows the expected path and draws only recorded steps', () => {
   const paths = tracePaths(sandbox.project);
   const startedAt = new Date().toISOString();
-  writeFileSync(
-    paths.running,
-    JSON.stringify({ task: 'T-001', stage: 'qa', role: 'qa', unit: 91, pid: process.pid, startedAt }),
+  markRunning(
+    paths,
+    ({ task: 'T-001', stage: 'qa', role: 'qa', unit: 91, pid: process.pid, startedAt }),
   );
   try {
     const flow = loadFlow(projectId, 'qa');
@@ -121,7 +121,7 @@ test('flow: the lane follows the expected path and draws only recorded steps', (
     assert.equal(flow.agent?.name, 'qa');
     assert.ok(!flow.lastRuns.some((run) => run.unit === 91));
   } finally {
-    rmSync(paths.running);
+    rmSync(paths.running, { recursive: true, force: true });
   }
 });
 

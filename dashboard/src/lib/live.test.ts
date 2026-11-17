@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
-import { tracePaths } from '@harness/core/paths';
+import { markRunning, tracePaths } from '@harness/core/paths';
 import { addProject } from '@harness/core/projects';
 import { lockHolder } from '@harness/core/supervise';
 import { FAKE_AGENT, makeSandbox, seedTask, type Sandbox } from '@harness/core/testkit/sandbox';
@@ -79,9 +79,9 @@ test('the live snapshot carries the unit in flight without tool arguments or mes
   const SECRET = 'sk-live-THIS-MUST-NOT-LEAK';
   seedTask(sandbox, { id: 'T-001', status: 'implementing', scope: ['src/**'], closes: ['true'] });
   const paths = tracePaths(sandbox.project);
-  writeFileSync(
-    paths.running,
-    JSON.stringify({
+  markRunning(
+    paths,
+    ({
       task: 'T-001',
       stage: 'implement',
       role: 'implementer',
@@ -128,7 +128,7 @@ test('the live snapshot carries the unit in flight without tool arguments or mes
     );
     assert.ok(!JSON.stringify(snapshot).includes(SECRET));
   } finally {
-    rmSync(paths.running, { force: true });
+    rmSync(paths.running, { recursive: true, force: true });
   }
 });
 

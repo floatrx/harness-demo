@@ -13,10 +13,9 @@ import {
   readFileSync,
   readdirSync,
   renameSync,
-  rmSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, join, relative } from 'node:path';
+import { basename, dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   type HarnessConfig,
@@ -28,7 +27,7 @@ import {
 } from './config.ts';
 import { runClosing, uncallableCommands } from './contracts/closing.ts';
 import { runGate } from './contracts/gate.ts';
-import { judgeScope, outsideHarness, quarantine, snapshot } from './contracts/scope.ts';
+import { type Foreign, judgeScope, outsideHarness, quarantine, snapshot } from './contracts/scope.ts';
 import { limitResetAt, readUsage, readVerdict, resultEvent } from './contracts/trace.ts';
 import { type RunningApp, restoreAppWrites, startApp, stopApp, stopOrphanApps } from './app.ts';
 import {
@@ -49,9 +48,11 @@ import {
   type TracePaths,
   appendHandoff,
   appendProgress,
+  clearRunning,
   ensureTrace,
+  listRunning,
+  markRunning,
   nextUnitNumber,
-  readRunning,
   tracePaths,
 } from './paths.ts';
 import { nextStep, stageFor } from './queue.ts';
@@ -61,7 +62,8 @@ import {
   type TaskFields,
   listTaskFiles,
   loadTask,
-  saveTask,
+  saveRecordedText,
+  saveRunnerTask,
   slugify,
   taskFields,
 } from './task/task.ts';
@@ -95,6 +97,18 @@ export interface RunOptions {
   /** Replaces `gh` for delivery (tests). Env `HARNESS_GH` does too. */
   gh?: string;
   log?: (line: string) => void;
+  /**
+   * Called once per step, synchronously when the step has taken its task (`null` when it took none). The supervisor
+   * starts the next step only after it: a second pick before the first one is claimed could take the same task.
+   */
+  onClaim?: (claim: Claim | null) => void;
+}
+
+/** What a step took: its task, and whether its unit runs in the main checkout (spec, plan). */
+export interface Claim {
+  task: string;
+  stage: UnitStage | 'advance' | 'deliver';
+  main: boolean;
 }
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -199,13 +213,47 @@ export function stageSpecialists(registry: readonly AgentDef[], stage: UnitStage
   return [...agents, ...registry.filter((agent) => agent.name === 'judge' && !agents.includes(agent))];
 }
 
-function alive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'EPERM';
+// ---- steps in flight (W2) -------------------------------------------------
+// One process runs every step of a supervisor, so the registry is in memory. Each entry keeps the tasks that were in
+// flight at any moment of its own run: what they wrote is theirs to answer for, not this unit's (scope.ts `Foreign`).
+
+interface Flight {
+  task: string;
+  main: boolean;
+  unit: number | null;
+  /** Every other task in flight at some moment of this one. */
+  overlap: Set<string>;
+  /** A main-checkout unit was in flight at some moment of this one. */
+  mainOverlap: boolean;
+}
+
+const flights = new Set<Flight>();
+
+/** The steps this process has in flight: their tasks, and whether the main checkout holds a unit. */
+export function inFlight(): { tasks: string[]; mainBusy: boolean } {
+  return { tasks: [...flights].map((flight) => flight.task), mainBusy: [...flights].some((flight) => flight.main) };
+}
+
+function claim(task: string, main: boolean): Flight {
+  const flight: Flight = { task, main, unit: null, overlap: new Set(), mainOverlap: false };
+  for (const other of flights) {
+    other.overlap.add(task);
+    other.mainOverlap ||= main;
+    flight.overlap.add(other.task);
+    flight.mainOverlap ||= other.main;
   }
+  flights.add(flight);
+  return flight;
+}
+
+/** What the others own during `flight`, for the judge and the quarantine of one tree. */
+function foreignOf(flight: Flight, judgingMainFromWorktree: boolean): Foreign {
+  const tasks = [...flight.overlap].filter((task) => task !== flight.task);
+  return {
+    harness: tasks.flatMap((task) => [`.harness/tasks/${task}.md`, `.harness/artifacts/${task}/**`]),
+    outside: judgingMainFromWorktree && flight.mainOverlap,
+    journal: tasks.length > 0,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -213,27 +261,40 @@ function alive(pid: number): boolean {
 export async function runUnit(project: string, options: RunOptions = {}): Promise<UnitResult> {
   // Apps the step started; stopped here, after the step, whatever way it ended (done, park, crash, timeout).
   const apps: RunningApp[] = [];
-  let result: UnitResult;
+  const held: { flight: Flight | null } = { flight: null };
+  let claimed = false;
+  const onClaim = (taken: Claim | null) => {
+    if (claimed) return;
+    claimed = true;
+    options.onClaim?.(taken);
+  };
   try {
-    result = await runStep(project, options, apps);
-  } finally {
-    for (const app of apps) {
-      await stopApp(app);
-      const restored = restoreAppWrites(app);
-      if (restored.length)
-        appendProgress(
-          tracePaths(project),
-          `the app rewrote ${restored.join(', ')} while it ran — restored after it stopped`,
-        );
+    let result: UnitResult;
+    try {
+      result = await runStep(project, { ...options, onClaim }, apps, held);
+    } finally {
+      onClaim(null);
+      for (const app of apps) {
+        await stopApp(app);
+        const restored = restoreAppWrites(app);
+        if (restored.length)
+          appendProgress(
+            tracePaths(project),
+            `the app rewrote ${restored.join(', ')} while it ran — restored after it stopped`,
+          );
+      }
     }
+    // A finished task's worktree goes once its app has stopped; the branch stays (it carries the pull request).
+    if (result.task && (result.to === 'delivered' || (result.to === 'done' && !deliversPr(project)))) {
+      const note = removeWorktree(project, worktreePath(project, result.task));
+      if (note) appendProgress(tracePaths(project), `${result.task}: ${note}`);
+    }
+    if (result.task && result.moved) await notifyAfter(project, result);
+    return result;
+  } finally {
+    // The task is free for the next pick only now: its app is stopped and its worktree gone.
+    if (held.flight) flights.delete(held.flight);
   }
-  // A finished task's worktree goes once its app has stopped; the branch stays (it carries the pull request).
-  if (result.task && (result.to === 'delivered' || (result.to === 'done' && !deliversPr(project)))) {
-    const note = removeWorktree(project, worktreePath(project, result.task));
-    if (note) appendProgress(tracePaths(project), `${result.task}: ${note}`);
-  }
-  if (result.task && result.moved) await notifyAfter(project, result);
-  return result;
 }
 
 function deliversPr(project: string): boolean {
@@ -258,7 +319,13 @@ async function notifyAfter(project: string, result: UnitResult): Promise<void> {
   }
 }
 
-async function runStep(project: string, options: RunOptions, apps: RunningApp[]): Promise<UnitResult> {
+async function runStep(
+  project: string,
+  options: RunOptions,
+  apps: RunningApp[],
+  /** Filled with this step's flight once it has taken a task; `runUnit` releases it. */
+  held: { flight: Flight | null },
+): Promise<UnitResult> {
   const paths = tracePaths(project);
   ensureTrace(paths);
   const say = (line: string) => {
@@ -272,12 +339,19 @@ async function runStep(project: string, options: RunOptions, apps: RunningApp[])
     if (error instanceof ConfigError) return { exit: EXIT.config, message: error.message, moved: false };
     throw error;
   }
-  const running = readRunning(paths);
-  if (running && alive(running.pid))
-    return { exit: EXIT.config, message: `a unit is already running: ${running.task} ${running.stage}`, moved: false };
-  // A running.json whose process is gone is left by a crash: the tree check below catches its dirt.
-  if (running) rmSync(paths.running, { force: true });
-  for (const note of await stopOrphanApps(paths.dir)) say(note);
+  // Units of another process (a `harness unit` next to a supervisor): one runner per checkout. This process's own
+  // units are in `flights`. Files left by a crashed process are removed by listRunning.
+  const elsewhere = listRunning(paths).find((entry) => entry.pid !== process.pid);
+  if (elsewhere)
+    return {
+      exit: EXIT.config,
+      message: `a unit is already running: ${elsewhere.task} ${elsewhere.stage}`,
+      moved: false,
+    };
+  const liveApps = new Set(
+    [...flights].flatMap((flight) => (flight.unit === null ? [] : [basename(paths.app(flight.unit))])),
+  );
+  for (const note of await stopOrphanApps(paths.dir, liveApps)) say(note);
 
   const drift = standingRulesDrift();
   if (drift.length)
@@ -321,28 +395,48 @@ async function runStep(project: string, options: RunOptions, apps: RunningApp[])
     }
   }
   const ctx = transitionContext(config);
-  const step = nextStep(
-    loaded.map((task) => task.fields),
-    ctx,
-    skip,
-  );
-  if (!step) return { exit: EXIT.idle, message: 'nothing left to take', moved: false };
+  // Never two steps for one task; never two units in the main checkout (spec, plan) at once.
+  const busy = inFlight();
+  for (const task of busy.tasks) skip.add(task);
+  const fields = loaded.map((task) => task.fields);
+  let step = nextStep(fields, ctx, skip);
+  while (step && busy.mainBusy && step.kind === 'unit' && isMainStage(step.stage)) {
+    skip.add(step.task.id);
+    step = nextStep(fields, ctx, skip);
+  }
+  if (!step)
+    return {
+      exit: EXIT.idle,
+      message: busy.tasks.length ? 'nothing to start beside the units in flight' : 'nothing left to take',
+      moved: false,
+    };
 
   const foreign = dirty(project)
     .map((entry) => entry.path)
     .filter(outsideHarness);
-  if (foreign.length)
+  if (foreign.length) {
+    // Units in flight: the dirt may be one of theirs, judged when it ends. Wait for them instead of stopping the loop.
+    if (busy.tasks.length)
+      return { exit: EXIT.idle, message: `the main checkout is dirty while units run — waiting`, moved: false };
     return {
       exit: EXIT.config,
       message: `the tree is dirty and the loop did not make it: ${foreign.slice(0, 5).join(', ')}`,
       moved: false,
     };
+  }
 
   const task = loaded.find((item) => item.fields.id === step.task.id) as LoadedTask;
+  // Taken: from here on no other pick in this process takes this task (or the main checkout, for spec and plan).
+  const main = step.kind === 'unit' && isMainStage(step.stage);
+  held.flight = claim(task.fields.id, main);
+  options.onClaim?.({ task: task.fields.id, stage: step.kind === 'unit' ? step.stage : step.kind, main });
   if (step.kind === 'advance') return advance(project, paths, task, step.action, step.target, say);
   if (step.kind === 'deliver') return deliver(project, paths, config, task, options, say);
-  return agentUnit(project, paths, config, registry, task, step.stage, options, say, apps);
+  return agentUnit(project, paths, config, registry, task, step.stage, options, say, apps, held.flight);
 }
+
+/** Spec and plan units run in the main checkout; the others in the task's worktree. */
+const isMainStage = (stage: UnitStage) => stage === 'spec' || stage === 'plan';
 
 function advance(
   _project: string,
@@ -356,7 +450,7 @@ function advance(
   if (action === 'auto-approve' && target === 'prototype') setField(doc, 'prototype', 'drafting');
   if (action === 'auto-accept') setField(doc, 'prototype', null);
   moveTo(doc, target, `runner · ${action}`);
-  saveTask(task.path, doc);
+  saveRunnerTask(task.path, doc);
   appendHandoff(paths, { task: fields.id, stage: 'advance', action, from: fields.status, to: target, exit: 0 });
   say(`${fields.id} ${fields.status} → ${target} (${action})`);
   return {
@@ -423,9 +517,11 @@ async function agentUnit(
   say: (line: string) => void,
   /** Filled with the app this unit starts; `runUnit` stops it after the unit. */
   apps: RunningApp[],
+  flight: Flight,
 ): Promise<UnitResult> {
   const role = STAGE_ROLE[stage];
   const unit = nextUnitNumber(paths);
+  flight.unit = unit;
   const id = task.fields.id;
   const taskRel = relative(project, task.path);
   const artifacts = `.harness/artifacts/${id}`;
@@ -479,23 +575,26 @@ async function agentUnit(
     const found = findTransition(task.fields, 'agent', 'start', ctx);
     if (found) moveTo(task.doc, found.target, `runner · unit ${unit}`);
   }
-  saveTask(task.path, task.doc);
+  saveRunnerTask(task.path, task.doc);
 
   const startedAt = new Date().toISOString();
   const before = snapshot(tree);
   // A unit in a worktree: the main checkout holds its task file, artifacts and journal, and must not change otherwise.
   const beforeMain = tree === project ? null : snapshot(project);
+  // Read when the trees are put back or judged, not now: units that start later are part of the overlap too.
   const restoreTrees = (allowedNew: readonly string[]): string =>
     [
-      quarantine(tree, before, `${id} unit ${unit}`, [], allowedNew),
-      ...(beforeMain ? [quarantine(project, beforeMain, `${id} unit ${unit}`, [], allowedNew)] : []),
+      quarantine(tree, before, `${id} unit ${unit}`, [], allowedNew, foreignOf(flight, false)),
+      ...(beforeMain
+        ? [quarantine(project, beforeMain, `${id} unit ${unit}`, [], allowedNew, foreignOf(flight, true))]
+        : []),
     ]
       .filter(Boolean)
       .join('; ');
   const beforeText = readFileSync(task.path, 'utf8');
   const beforeDoc = parseTask(beforeText);
   const status = taskFields(beforeDoc).status;
-  writeFileSync(paths.running, `${JSON.stringify({ task: id, stage, role, unit, pid: process.pid, startedAt })}\n`);
+  markRunning(paths, { task: id, stage, role, unit, pid: process.pid, startedAt });
   say(`unit ${unit} · ${id} · ${stage} · ${role} · start`);
 
   const specialists = stageSpecialists(registry, stage, config);
@@ -560,7 +659,7 @@ async function agentUnit(
       },
     });
   } finally {
-    rmSync(paths.running, { force: true });
+    clearRunning(paths, unit);
   }
 
   const base = { task: id, stage, unit, from: status, startedAt } as const;
@@ -578,7 +677,7 @@ async function agentUnit(
   // -- the agent command does not exist: configuration, waiting fixes nothing.
   if (run.code === 127 || /ENOENT/.test(run.spawnError ?? '')) {
     const note = restoreTrees([]);
-    writeFileSync(task.path, beforeText);
+    saveRecordedText(task.path, beforeText, 'runner');
     const message = `agent command not found: ${lastLine(run.output) || how.display}`;
     say(`unit ${unit} · ${id} · exit 2 · ${message}${note ? ` · ${note}` : ''}`);
     return { ...base, exit: EXIT.config, message, to: status, moved: false };
@@ -587,7 +686,7 @@ async function agentUnit(
   // -- the agent could not run: put everything back, the task is untouched, the supervisor waits.
   if (run.spawnError || (run.code !== 0 && AGENT_DOWN.test(run.output))) {
     const note = restoreTrees([]);
-    writeFileSync(task.path, beforeText);
+    saveRecordedText(task.path, beforeText, 'runner');
     // The result text says why ("You've hit your session limit · resets 9:10pm (…)"); the last stream-json line
     // is often a bare session_state_changed event (pilot lesson 9).
     const why = run.spawnError ?? (resultEvent(run.output)?.result || lastLine(run.output));
@@ -607,10 +706,16 @@ async function agentUnit(
     // In a worktree the loop files are links to the main checkout and are judged there; nothing else under its
     // `.harness/` (the versioned config) may change.
     harnessAllowed: beforeMain ? [] : harnessAllowed,
+    foreign: foreignOf(flight, false),
   });
   violations.push(...scope.violations);
   if (beforeMain) {
-    const main = judgeScope(project, beforeMain, { branch: config.baseBranch, allowed: [], harnessAllowed });
+    const main = judgeScope(project, beforeMain, {
+      branch: config.baseBranch,
+      allowed: [],
+      harnessAllowed,
+      foreign: foreignOf(flight, true),
+    });
     // Remote refs are shared by every worktree: a push is reported once.
     for (const violation of main.violations) {
       const line = /^(push|loop-owned file):/.test(violation) ? violation : `main checkout: ${violation}`;
@@ -633,7 +738,7 @@ async function agentUnit(
     let note = '';
     if (restore) {
       note = restoreTrees([`${artifacts}/**`]);
-      writeFileSync(task.path, beforeText);
+      saveRecordedText(task.path, beforeText, 'runner');
     }
     const doc = parseTask(readFileSync(task.path, 'utf8'));
     const reason = `${stage} unit ${unit}: ${reasons.join('; ')}`;
@@ -643,7 +748,7 @@ async function agentUnit(
     for (const line of reasons) appendLog(doc, `  ↳ ${line}`);
     for (const line of shotLines) appendLog(doc, line);
     if (note) appendLog(doc, `  ↳ quarantine: ${note}`);
-    saveTask(task.path, doc);
+    saveRunnerTask(task.path, doc);
     say(`unit ${unit} · ${id} · exit 1 · parked · ${reasons.join('; ')}`);
     appendHandoff(paths, { ...base, to: 'parked', exit: EXIT.hardStop, reason, usage: readUsage(run.output) });
     return { ...base, exit: EXIT.hardStop, message: reason, to: 'parked', moved: true };
@@ -765,7 +870,7 @@ async function agentUnit(
   if (target !== status) moveTo(doc, target, who);
   if (commit) appendLog(doc, `  ↳ commit ${commit.slice(0, 7)} on ${branch}`);
   for (const line of shotLines) appendLog(doc, line);
-  saveTask(task.path, doc);
+  saveRunnerTask(task.path, doc);
   const message = `${status} → ${target}${commit ? ` · commit ${commit.slice(0, 7)}` : ''}`;
   say(`unit ${unit} · ${id} · ${stage} · exit 0 · ${message}`);
   appendHandoff(paths, {

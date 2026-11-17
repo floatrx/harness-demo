@@ -1,6 +1,6 @@
 // Where loop state lives. Everything under `trace/` is local (gitignored) and safe to delete between runs.
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import type { UnitUsage } from './contracts/trace.ts';
 import { join } from 'node:path';
 
@@ -16,10 +16,12 @@ export function tracePaths(project: string) {
     lock: join(dir, 'supervisor.lock'),
     pause: join(dir, 'PAUSE'),
     stop: join(dir, 'STOP'),
-    running: join(dir, 'running.json'),
+    /** One file per unit in flight: `running/<unit>.json` (see `listRunning`). */
+    running: join(dir, 'running'),
+    runningUnit: (n: number) => join(dir, 'running', `${String(n).padStart(4, '0')}.json`),
     progress: join(dir, 'progress.log'),
     handoffs: join(dir, 'handoffs.jsonl'),
-    /** One line per task file a human wrote (CLI or dashboard): path + sha256 of the content written. */
+    /** One line per recorded task-file write — a human's (CLI, dashboard) or the runner's: path, sha256, who. */
     humanWrites: join(dir, 'human-writes.jsonl'),
     unitSeq: join(dir, 'unit-seq'),
     unit: (n: number) => join(dir, `unit-${String(n).padStart(4, '0')}.jsonl`),
@@ -55,13 +57,53 @@ export interface Running {
   startedAt: string;
 }
 
-export function readRunning(paths: TracePaths): Running | null {
-  if (!existsSync(paths.running)) return null;
+const pidAlive = (pid: number) => {
   try {
-    return JSON.parse(readFileSync(paths.running, 'utf8')) as Running;
-  } catch {
-    return null;
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
   }
+};
+
+/**
+ * The units in flight, oldest first. A file whose process is gone was left by a crash: it is removed, and the tree
+ * checks catch its dirt. A pre-W2 `running.json` is read once and removed the same way.
+ */
+export function listRunning(paths: TracePaths): Running[] {
+  const legacy = join(paths.dir, 'running.json');
+  const files = [
+    ...(existsSync(legacy) ? [legacy] : []),
+    ...(existsSync(paths.running) ? readdirSync(paths.running).filter((name) => name.endsWith('.json')) : []).map(
+      (name) => join(paths.running, name),
+    ),
+  ];
+  const units: Running[] = [];
+  for (const file of files) {
+    let entry: Running | null = null;
+    try {
+      entry = JSON.parse(readFileSync(file, 'utf8')) as Running;
+    } catch {
+      // Half-written: the writer is still on it, or it crashed. Either way not a unit to show.
+    }
+    if (entry && pidAlive(entry.pid)) units.push(entry);
+    else if (entry) rmSync(file, { force: true });
+  }
+  return units.sort((a, b) => a.unit - b.unit);
+}
+
+/** The first unit in flight (the dashboard shows one until W3), or null. */
+export function readRunning(paths: TracePaths): Running | null {
+  return listRunning(paths)[0] ?? null;
+}
+
+export function markRunning(paths: TracePaths, entry: Running): void {
+  mkdirSync(paths.running, { recursive: true });
+  writeFileSync(paths.runningUnit(entry.unit), `${JSON.stringify(entry)}\n`);
+}
+
+export function clearRunning(paths: TracePaths, unit: number): void {
+  rmSync(paths.runningUnit(unit), { force: true });
 }
 
 export function appendProgress(paths: TracePaths, line: string): void {

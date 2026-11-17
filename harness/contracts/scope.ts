@@ -5,12 +5,15 @@
 // - no remote-tracking ref moved — no push, no fetch;
 // - every newly dirty file is inside the unit's allowed pathspec;
 // - under `.harness/`, only the task's own file, its artifacts folder and the journal change — plus other task files
-//   whose content is exactly what a human wrote meanwhile (the human-write ledger), which are not the unit's doing.
+//   whose content is exactly what a human or the runner wrote meanwhile (the write ledger), which are not the unit's
+//   doing;
+// - with several units in flight, what another unit owns is that unit's to answer for (`Foreign`): its task file and
+//   artifacts, and — for a worktree unit judging the main checkout — the main checkout's own unit's dirt.
 
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { currentBranch, dirty, git, head, remoteRefs, tryGit } from '../git.ts';
-import { isHumanWrite } from '../task/task.ts';
+import { isRecordedWrite } from '../task/task.ts';
 
 export interface Snapshot {
   branch: string;
@@ -94,6 +97,19 @@ export function inScope(path: string, patterns: readonly string[]): boolean {
 
 // ---- the judgement ---------------------------------------------------------
 
+/**
+ * What other units in flight own during this unit (W2): this unit is neither judged for it nor does its quarantine
+ * touch it. Each owner's own contracts judge it when that unit ends.
+ */
+export interface Foreign {
+  /** `.harness/` pathspec of the other units: their task files and artifacts folders. */
+  harness?: readonly string[];
+  /** Another unit runs in this tree (a spec or plan unit in the main checkout): changes outside `.harness/` are its. */
+  outside?: boolean;
+  /** Other units append to the shared journal: a quarantine keeps it. */
+  journal?: boolean;
+}
+
 export interface ScopeRules {
   /** The branch the unit runs on. */
   branch: string;
@@ -101,6 +117,7 @@ export interface ScopeRules {
   allowed: readonly string[];
   /** Paths under `.harness/` the unit may write (the task file, its artifacts, the journal). */
   harnessAllowed: readonly string[];
+  foreign?: Foreign;
 }
 
 export interface ScopeVerdict {
@@ -126,14 +143,17 @@ export function judgeScope(project: string, before: Snapshot, rules: ScopeRules)
   }
 
   const committed = now !== before.head ? diffNames(project, before.head, now) : [];
-  const changed = [
-    ...new Set([
-      ...dirty(project)
-        .map((entry) => entry.path)
-        .filter((path) => outsideHarness(path) && !before.dirty.has(path)),
-      ...committed.filter(outsideHarness),
-    ]),
-  ].sort();
+  // Another unit runs in this tree: what changed outside `.harness/` is that unit's to answer for.
+  const changed = rules.foreign?.outside
+    ? []
+    : [
+        ...new Set([
+          ...dirty(project)
+            .map((entry) => entry.path)
+            .filter((path) => outsideHarness(path) && !before.dirty.has(path)),
+          ...committed.filter(outsideHarness),
+        ]),
+      ].sort();
   for (const path of changed) {
     if (inScope(path, rules.allowed)) continue;
     const tracked = tryGit(project, ['ls-files', '--error-unmatch', '--', path]).code === 0;
@@ -149,7 +169,8 @@ export function judgeScope(project: string, before: Snapshot, rules: ScopeRules)
     })
     .sort();
   for (const path of harnessChanged) {
-    if (inScope(path, rules.harnessAllowed) || isHumanWrite(project, path, after.get(path))) continue;
+    if (inScope(path, rules.harnessAllowed) || isRecordedWrite(project, path, after.get(path))) continue;
+    if (inScope(path, rules.foreign?.harness ?? [])) continue;
     violations.push(`loop-owned file: ${path}`);
   }
   return { violations, changed, harnessChanged };
@@ -173,7 +194,10 @@ export function quarantine(
   label: string,
   keep: readonly string[],
   allowedNew: readonly string[],
+  foreign: Foreign = {},
 ): string {
+  const theirs = (path: string) =>
+    inScope(path, foreign.harness ?? []) || (!!foreign.journal && path === '.harness/JOURNAL.md');
   const notes: string[] = [];
   if (currentBranch(project) !== before.branch) {
     git(project, ['checkout', '--quiet', before.branch]);
@@ -185,7 +209,7 @@ export function quarantine(
   }
   const paths = dirty(project)
     .map((entry) => entry.path)
-    .filter((path) => outsideHarness(path) && !before.dirty.has(path));
+    .filter((path) => outsideHarness(path) && !before.dirty.has(path) && !foreign.outside);
   if (paths.length) {
     git(project, [
       'stash',
@@ -201,9 +225,9 @@ export function quarantine(
   }
   const after = harnessFiles(project);
   for (const [path, content] of before.harness) {
-    if (keep.includes(path)) continue;
+    if (keep.includes(path) || theirs(path)) continue;
     const current = after.get(path);
-    if (isHumanWrite(project, path, current)) continue;
+    if (isRecordedWrite(project, path, current)) continue;
     if (!current || !current.equals(content)) {
       mkdirSync(dirname(join(project, path)), { recursive: true });
       writeFileSync(join(project, path), content);
@@ -211,8 +235,8 @@ export function quarantine(
     }
   }
   for (const path of after.keys()) {
-    if (before.harness.has(path) || keep.includes(path) || inScope(path, allowedNew)) continue;
-    if (isHumanWrite(project, path, after.get(path))) continue;
+    if (before.harness.has(path) || keep.includes(path) || inScope(path, allowedNew) || theirs(path)) continue;
+    if (isRecordedWrite(project, path, after.get(path))) continue;
     // A file the unit created where it may not write: renamed, so a stray `T-999.md` is no task.
     renameSync(join(project, path), join(project, `${path}.quarantined`));
     notes.push(`renamed ${path} → ${path}.quarantined`);

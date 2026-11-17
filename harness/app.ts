@@ -151,12 +151,14 @@ export async function stopApp(app: Pick<RunningApp, 'pid' | 'record'>, graceMs =
 
 /**
  * Stops app groups whose runner is gone (a crash between start and stop). Only groups recorded in `trace/` — that is,
- * started by this harness — are touched. Returns one note per group stopped.
+ * started by this harness — are touched. Returns one note per group stopped. `live` names the records
+ * (`unit-NNNN.app.json`) of units this process still runs: one runner pid owns them all, so the pid cannot tell.
  */
-export async function stopOrphanApps(traceDir: string): Promise<string[]> {
+export async function stopOrphanApps(traceDir: string, live: ReadonlySet<string> = new Set()): Promise<string[]> {
   if (!existsSync(traceDir)) return [];
   const notes: string[] = [];
   for (const name of readdirSync(traceDir).filter((file) => file.endsWith('.app.json'))) {
+    if (live.has(name)) continue;
     const record = join(traceDir, name);
     let entry: { pid?: number; runner?: number };
     try {

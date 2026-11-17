@@ -4,7 +4,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { tracePaths } from './paths.ts';
+import { listRunning, tracePaths } from './paths.ts';
 import { FAKE_AGENT, makeSandbox, seedTask } from './testkit/sandbox.ts';
 
 const CLI = fileURLToPath(new URL('./bin/harness.ts', import.meta.url));
@@ -35,7 +35,7 @@ test('pause lands at the unit boundary, resume continues, stop ends the supervis
   const child = spawn('node', [CLI, 'run', '--project', sandbox.project], { env, stdio: 'ignore' });
   const exited = new Promise<number | null>((resolve) => child.on('exit', resolve));
   try {
-    await until(() => existsSync(paths.running), 'the implement unit to start');
+    await until(() => listRunning(paths).length > 0, 'the implement unit to start');
     assert.equal(cli('pause').status, 0);
     await until(() => progress().includes('paused at the unit boundary'), 'the pause');
     const log = progress();
@@ -43,7 +43,7 @@ test('pause lands at the unit boundary, resume continues, stop ends the supervis
     assert.ok(log.indexOf('implement · exit 0') < log.indexOf('paused at the unit boundary'));
     await new Promise((resolve) => setTimeout(resolve, 300));
     assert.equal(sandbox.task('T-001').fields.status, 'qa');
-    assert.equal(existsSync(paths.running), false);
+    assert.equal(listRunning(paths).length > 0, false);
 
     assert.equal(cli('resume').stdout.trim(), 'resumed');
     await until(() => sandbox.task('T-001').fields.status === 'done', 'the task to finish after resume');

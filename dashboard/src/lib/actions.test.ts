@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
-import { tracePaths } from '@harness/core/paths';
+import { markRunning, tracePaths } from '@harness/core/paths';
 import { addProject } from '@harness/core/projects';
 import { getSection, normalizeBody, putSection, setField } from '@harness/core/task/parse';
 import { loadTask, saveTask } from '@harness/core/task/task';
@@ -60,9 +60,9 @@ test('unknown project, task or action is 404', async () => {
 test('a task in the running unit is refused', async () => {
   seedTask(sandbox, { id: 'T-003', status: 'draft' });
   const paths = tracePaths(sandbox.project);
-  writeFileSync(
-    paths.running,
-    JSON.stringify({
+  markRunning(
+    paths,
+    ({
       task: 'T-003',
       stage: 'spec',
       role: 'writer',
@@ -76,7 +76,7 @@ test('a task in the running unit is refused', async () => {
     assert.equal(response.status, 409);
     assert.match(((await response.json()) as { error: string }).error, /unit 7/);
   } finally {
-    rmSync(paths.running, { force: true });
+    rmSync(paths.running, { recursive: true, force: true });
   }
 });
 
@@ -174,9 +174,9 @@ test('the board offers drag moves only along human transitions, and none for the
   assert.deepEqual(moves('T-010'), [{ target: 'ready', action: 'approve' }]);
   assert.deepEqual(moves('T-011'), []);
   const paths = tracePaths(sandbox.project);
-  writeFileSync(
-    paths.running,
-    JSON.stringify({
+  markRunning(
+    paths,
+    ({
       task: 'T-010',
       stage: 'plan',
       role: 'planner',
@@ -188,6 +188,6 @@ test('the board offers drag moves only along human transitions, and none for the
   try {
     assert.deepEqual(moves('T-010'), []);
   } finally {
-    rmSync(paths.running, { force: true });
+    rmSync(paths.running, { recursive: true, force: true });
   }
 });

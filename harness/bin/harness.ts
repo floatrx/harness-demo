@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { loadConfig } from '../config.ts';
-import { readRunning, tracePaths } from '../paths.ts';
+import { listRunning, readRunning, tracePaths } from '../paths.ts';
 import { sendTelegram, telegramKeys } from '../notify.ts';
 import { projectStats } from '../stats.ts';
 import { addProject, listProjects, removeProject, resolveProject } from '../projects.ts';
@@ -108,8 +108,8 @@ function taskPath(root: string, id: string | undefined): string {
 function act(change: (doc: TaskDoc) => TaskDoc): void {
   const root = project();
   const path = taskPath(root, args[0]);
-  const running = readRunning(tracePaths(root));
-  if (running && running.task === args[0]) fail(`${args[0]} is in a running unit (${running.stage}); pause first`, 1);
+  const running = listRunning(tracePaths(root)).find((entry) => entry.task === args[0]);
+  if (running) fail(`${args[0]} is in a running unit (${running.stage}); pause first`, 1);
   // The runner sets HARNESS_LOOP for every unit: an agent may not act as the human through the CLI.
   if (process.env.HARNESS_LOOP) fail('a human action cannot run inside a unit (HARNESS_LOOP is set)', 1);
   try {
@@ -239,7 +239,9 @@ async function main(): Promise<void> {
         supervisor: lockHolder(root),
         paused: existsSync(paths.pause),
         stopping: existsSync(paths.stop),
+        /** The first unit in flight (kept for readers of one unit), and every unit in flight. */
         running: readRunning(paths),
+        inFlight: listRunning(paths),
         tasks: tasks.map((task) => ({
           ...task,
           issues: validateTask(loadTask(join(paths.tasks, `${task.id}.md`)).doc).map((issue) => issue.message),
@@ -252,8 +254,8 @@ async function main(): Promise<void> {
       console.log(
         `supervisor: ${state.supervisor ? `pid ${state.supervisor}` : 'not running'}${state.paused ? ' · PAUSED' : ''}${state.stopping ? ' · STOP requested' : ''}`,
       );
-      if (state.running)
-        console.log(`running: unit ${state.running.unit} · ${state.running.task} · ${state.running.stage}`);
+      for (const entry of state.inFlight)
+        console.log(`running: unit ${entry.unit} · ${entry.task} · ${entry.stage}`);
       for (const task of state.tasks) {
         console.log(
           `${task.id}  ${task.status.padEnd(12)} ${task.title}${task.parked ? `\n        parked: ${task.parked}` : ''}`,

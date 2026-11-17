@@ -1,7 +1,9 @@
-// The supervisor: policy over time. It runs units one at a time and decides what each exit code means.
+// The supervisor: policy over time. It runs up to `limits.parallel` units at once and decides what each exit code means.
 //
 // - one loop per checkout (`trace/supervisor.lock`, a dead holder is taken over);
-// - `trace/PAUSE` and `trace/STOP` are files read at the unit boundary, never mid-turn;
+// - up to `limits.parallel` steps in flight, one per task, one in the main checkout (the runner's pick enforces both);
+// - `trace/PAUSE` and `trace/STOP` are files read at the unit boundary, never mid-turn: no new unit starts, the units
+//   in flight finish;
 // - exit 2 stops (waiting fixes nothing); 4 waits for the agent to come back, up to a ceiling;
 // - `barrenUnits` units in a row that moved nothing stop the loop instead of spinning;
 // - an optional deadline.
@@ -14,7 +16,7 @@ import { deliveryPreflight } from './deliver.ts';
 import { notify } from './notify.ts';
 import { sh } from './git.ts';
 import { appendProgress, ensureTrace, tracePaths } from './paths.ts';
-import { type RunOptions, type UnitResult, EXIT, billing, runUnit } from './runner.ts';
+import { type Claim, type RunOptions, type UnitResult, EXIT, billing, runUnit } from './runner.ts';
 
 export interface SuperviseOptions extends RunOptions {
   /** Exit 0 when nothing is left to take instead of idling for new work. */
@@ -119,64 +121,137 @@ export async function supervise(project: string, options: SuperviseOptions = {})
 
   say(`start · pid ${process.pid}${options.onceThrough ? ' · once-through' : ''}`);
   say(`billing: ${billing(config, options).note}`);
+
+  // The units in flight. Each settles to itself, so the one that ended can be taken out of the pool.
+  type Flying = Promise<{ flying: Flying; result: UnitResult }>;
+  const pool = new Set<Flying>();
+  const parallel = config.limits.parallel;
+  const halt: {
+    /** The run ends once the pool is empty (a config error, barren). */
+    ending: { exit: SuperviseResult['exit']; reason: string } | null;
+    /** The agent could not run: no new start; the wait begins once the pool is empty. */
+    down: UnitResult | null;
+  } = { ending: null, down: null };
+
+  /* One step: start it, and wait only until it has taken its task — or ended without one. */
+  const start = async (): Promise<UnitResult | null> => {
+    let claimed: (claim: Claim | null) => void = () => {};
+    const picked = new Promise<Claim | null>((resolve) => (claimed = resolve));
+    const run = (options.unitRunner ?? runUnit)(project, { ...options, onClaim: (claim) => claimed(claim) });
+    const claim = await Promise.race([picked, run.then(() => null)]);
+    if (!claim) return run;
+    const flying: Flying = run.then((result) => ({ flying, result }));
+    pool.add(flying);
+    return null;
+  };
+
+  /* What a finished unit means for the run; the same policy as one unit at a time, applied as each one ends. */
+  const settle = (result: UnitResult) => {
+    units.push(result);
+    switch (result.exit) {
+      case EXIT.done:
+      case EXIT.hardStop:
+        waitedMs = 0;
+        downNotified = false;
+        barren = result.moved ? 0 : barren + 1;
+        if (barren >= s.barrenUnits) halt.ending ??= { exit: 3, reason: `${barren} units in a row moved nothing` };
+        break;
+      case EXIT.config:
+        halt.ending ??= { exit: 2, reason: result.message };
+        break;
+      case EXIT.agentDown:
+        halt.down ??= result;
+        break;
+    }
+  };
+
+  const landOne = async () => {
+    const { flying, result } = await Promise.race(pool);
+    pool.delete(flying);
+    settle(result);
+  };
+
+  /** The agent could not run: wait for it as before. False = a stop was requested meanwhile. */
+  const waitForDown = async (result: UnitResult): Promise<SuperviseResult | null> => {
+    if (waitedMs >= s.usageCeilingSeconds * 1000)
+      return finish(4, `agent still down after ${Math.round(waitedMs / 1000)}s`);
+    // A limit that names its reset: nap until then (+1 min), unless that runs past the ceiling.
+    const left = s.usageCeilingSeconds * 1000 - waitedMs;
+    const until = result.retryAt && result.retryAt - Date.now() < left ? result.retryAt + 60_000 : undefined;
+    say(`agent could not run (${result.message}) — waiting${until ? ` until ${new Date(until).toISOString()}` : ''}`);
+    if (!downNotified) {
+      downNotified = true;
+      await notify(project, config, paths, {
+        event: 'supervisor',
+        text: `the agent could not run (${result.message}) — waiting, then retrying`,
+      });
+    }
+    const started = Date.now();
+    const ok = until ? await nap(Math.max(0, until - Date.now())) : await waitForAgent(project, config, nap);
+    waitedMs += Date.now() - started;
+    return ok ? null : finish(0, 'stopped while waiting for the agent');
+  };
+
   try {
     for (;;) {
-      if (stopRequested()) return finish(0, 'stopped');
-      if (existsSync(paths.pause)) {
+      // A reason not to start another unit now. The units in flight always finish first.
+      const hold = halt.ending
+        ? 'ending'
+        : halt.down
+          ? 'down'
+          : stopRequested()
+            ? 'stop'
+            : existsSync(paths.pause)
+              ? 'pause'
+              : options.deadline && Date.now() >= options.deadline
+                ? 'deadline'
+                : options.maxUnits !== undefined && units.length + pool.size >= options.maxUnits
+                  ? 'max'
+                  : pool.size >= parallel
+                    ? 'full'
+                    : null;
+      if (hold && pool.size) {
+        await landOne();
+        continue;
+      }
+      if (halt.ending) return finish(halt.ending.exit, halt.ending.reason);
+      if (halt.down) {
+        const result = halt.down;
+        halt.down = null;
+        const stop = await waitForDown(result);
+        if (stop) return stop;
+        continue;
+      }
+      if (hold === 'stop') return finish(0, 'stopped');
+      if (hold === 'pause') {
         say('paused at the unit boundary');
         while (existsSync(paths.pause) && !stopRequested()) await sleep(s.pausePollSeconds * 1000);
         if (stopRequested()) return finish(0, 'stopped while paused');
         say('resumed');
+        continue;
       }
-      if (options.deadline && Date.now() >= options.deadline) return finish(0, 'deadline reached');
-      if (options.maxUnits !== undefined && units.length >= options.maxUnits)
-        return finish(0, `max units (${options.maxUnits})`);
+      if (hold === 'deadline') return finish(0, 'deadline reached');
+      if (hold === 'max') return finish(0, `max units (${options.maxUnits})`);
 
-      const result = await (options.unitRunner ?? runUnit)(project, options);
-      units.push(result);
-      switch (result.exit) {
-        case EXIT.done:
-        case EXIT.hardStop:
-          waitedMs = 0;
-          downNotified = false;
-          barren = result.moved ? 0 : barren + 1;
-          if (barren >= s.barrenUnits) return finish(3, `${barren} units in a row moved nothing`);
-          break;
-        case EXIT.config:
-          return finish(2, result.message);
-        case EXIT.idle:
-          if (options.onceThrough) return finish(0, 'drained: nothing left to take');
-          {
-            // Every human action (CLI or dashboard) appends to the human-write ledger: wake on it instead of
-            // sleeping out the idle poll, or an Approve sat unanswered for up to 30 s (quickstart review).
-            const ledger = () => (existsSync(paths.humanWrites) ? statSync(paths.humanWrites).size : 0);
-            const seen = ledger();
-            if (!(await nap(s.idlePollSeconds * 1000, () => ledger() !== seen))) return finish(0, 'stopped while idle');
-          }
-          break;
-        case EXIT.agentDown: {
-          if (waitedMs >= s.usageCeilingSeconds * 1000)
-            return finish(4, `agent still down after ${Math.round(waitedMs / 1000)}s`);
-          // A limit that names its reset: nap until then (+1 min), unless that runs past the ceiling.
-          const left = s.usageCeilingSeconds * 1000 - waitedMs;
-          const until = result.retryAt && result.retryAt - Date.now() < left ? result.retryAt + 60_000 : undefined;
-          say(
-            `agent could not run (${result.message}) — waiting${until ? ` until ${new Date(until).toISOString()}` : ''}`,
-          );
-          if (!downNotified) {
-            downNotified = true;
-            await notify(project, config, paths, {
-              event: 'supervisor',
-              text: `the agent could not run (${result.message}) — waiting, then retrying`,
-            });
-          }
-          const started = Date.now();
-          const ok = until ? await nap(Math.max(0, until - Date.now())) : await waitForAgent(project, config, nap);
-          waitedMs += Date.now() - started;
-          if (!ok) return finish(0, 'stopped while waiting for the agent');
-          break;
-        }
+      const result = await start();
+      if (!result) continue; // it took a task and runs; try to start another beside it
+      if (result.exit !== EXIT.idle) {
+        settle(result);
+        continue;
       }
+      // Nothing to start beside the units in flight: wait for one of them to end, then pick again. Not a unit: it is
+      // not counted (maxUnits, the result list).
+      if (pool.size) {
+        await landOne();
+        continue;
+      }
+      units.push(result);
+      if (options.onceThrough) return finish(0, 'drained: nothing left to take');
+      // Every human action (CLI or dashboard) appends to the write ledger: wake on it instead of sleeping out the idle
+      // poll, or an Approve sat unanswered for up to 30 s (quickstart review).
+      const ledger = () => (existsSync(paths.humanWrites) ? statSync(paths.humanWrites).size : 0);
+      const seen = ledger();
+      if (!(await nap(s.idlePollSeconds * 1000, () => ledger() !== seen))) return finish(0, 'stopped while idle');
     }
   } finally {
     process.off('SIGINT', onSignal);

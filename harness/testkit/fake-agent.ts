@@ -6,7 +6,8 @@
 //
 // The scenario lists steps per stage (or per `T-NNN:stage`). Each invocation consumes the next step for
 // its key; past the end of the list, or with no list, the stage's default step runs. A step is a list of
-// actions. Invocation counters live next to the scenario in `<scenario>.state.json`.
+// actions. Invocation counters live next to the scenario, one file per task and key in `<scenario>.state/` — units in
+// flight side by side never read and rewrite one shared file.
 
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -104,11 +105,12 @@ function nextStep(): Action[] {
   const keys = [`${taskId}:${stage}`, stage];
   const key = keys.find((name) => scenario.steps?.[name]) ?? stage;
   const list = scenario.steps?.[key] ?? [];
-  const statePath = `${scenarioPath ?? join(project, '.harness/trace/fake')}.state.json`;
-  const state = existsSync(statePath) ? (JSON.parse(readFileSync(statePath, 'utf8')) as Record<string, number>) : {};
-  const index = state[`${taskId}:${key}`] ?? 0;
-  state[`${taskId}:${key}`] = index + 1;
-  writeFileSync(statePath, JSON.stringify(state));
+  const stateDir = `${scenarioPath ?? join(project, '.harness/trace/fake')}.state`;
+  mkdirSync(stateDir, { recursive: true });
+  // One task's unit at a time (the runner never runs two for one task), so a per-key file needs no lock.
+  const counter = join(stateDir, `${taskId}-${key.replace(/[^\w-]/g, '_')}`);
+  const index = existsSync(counter) ? Number(readFileSync(counter, 'utf8')) || 0 : 0;
+  writeFileSync(counter, String(index + 1));
   return list[index] ?? [{ default: true }];
 }
 

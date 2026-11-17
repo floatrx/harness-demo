@@ -13,7 +13,8 @@ import { currentBranch, dirty, git } from './git.ts';
 import { worktreePath } from './worktree.ts';
 import { type UnitResult, runUnit } from './runner.ts';
 import { portBusy } from './app.ts';
-import { supervise } from './supervise.ts';
+import { requestStop, supervise } from './supervise.ts';
+import { listRunning, tracePaths } from './paths.ts';
 import { type Sandbox, makeSandbox, readLog, seedTask } from './testkit/sandbox.ts';
 import { accept, addReview, answerQuestion, approve, comment, reopen, stamp, submit } from './task/write.ts';
 import { listTaskFiles, loadTask, saveTask } from './task/task.ts';
@@ -88,6 +89,16 @@ function hardStop(name: string, actions: unknown[], match: RegExp, config: Recor
       }),
   };
 }
+
+/* W2: units side by side. `progress.log` orders the evidence: a unit's `start` line and its `exit` line. */
+const PARALLEL = { limits: { parallel: 2 } };
+const progressLines = (sandbox: Sandbox) => readFileSync(tracePaths(sandbox.project).progress, 'utf8').split('\n');
+const lineOf = (lines: string[], pattern: RegExp) => lines.findIndex((line) => pattern.test(line));
+const startOf = (lines: string[], id: string, stage: string) =>
+  lineOf(lines, new RegExp(`· ${id} · ${stage} · \\S+ · start`));
+const exitOf = (lines: string[], id: string, stage: string) =>
+  lineOf(lines, new RegExp(`· ${id} · (${stage} · exit|exit [124])`));
+const sleepThen = (ms: number) => [{ sleep: ms }, { default: true }];
 
 const statusTrail = (log: string) =>
   [...log.matchAll(/ (\S+) → (\S+) · /g)].map((match) => `${match[1]}→${match[2]}`).join(' ');
@@ -870,6 +881,182 @@ export const CASES: Case[] = [
       });
       return `${ran} · ${failed}`;
     },
+  },
+  {
+    name: 'parallel: two ready tasks implement side by side; each branch holds only its own commit',
+    run: () =>
+      withSandbox(PARALLEL, async (sandbox) => {
+        seedTask(sandbox, { ...READY, id: 'T-001' });
+        seedTask(sandbox, { ...READY, id: 'T-002' });
+        sandbox.scenario({ steps: { implement: [sleepThen(800) as never] } });
+        await supervise(sandbox.project, { ...sandbox.agent, onceThrough: true });
+        const lines = progressLines(sandbox);
+        const second = startOf(lines, 'T-002', 'implement');
+        const first = exitOf(lines, 'T-001', 'implement');
+        expect(second >= 0 && first >= 0 && second < first, `T-002 started at line ${second}, T-001 ended at ${first}`);
+        for (const id of ['T-001', 'T-002']) {
+          const task = sandbox.task(id).fields;
+          expect(task.status === 'done', `${id} is ${task.status}`);
+          const own = sandbox.git(['rev-list', '--count', `main..${task.branch}`]).trim();
+          expect(own === '1', `${id}'s branch holds ${own} commits`);
+        }
+        expect(currentBranch(sandbox.project) === 'main', 'the main checkout left main');
+        return `T-002 started before T-001 ended (lines ${second} < ${first}) · both done · one commit each`;
+      }),
+  },
+  {
+    name: 'parallel: a unit parked meanwhile leaves the other unit\'s task file, artifacts and branch alone',
+    run: () =>
+      withSandbox(PARALLEL, async (sandbox) => {
+        seedTask(sandbox, { ...READY, id: 'T-001' });
+        seedTask(sandbox, { ...READY, id: 'T-002' });
+        sandbox.scenario({
+          steps: {
+            // T-001 parks halfway through T-002, after T-002 has written its artifact and a journal line.
+            'T-001:implement': [
+              [{ sleep: 600 }, { write: 'README.md', content: 'out of scope\n' }, { default: true }] as never,
+            ],
+            'T-002:implement': [
+              [
+                { sleep: 150 },
+                { write: '.harness/artifacts/T-002/note.txt', content: 'evidence\n' },
+                { append: '.harness/JOURNAL.md', content: '- T-002: a lesson from the side-by-side unit\n' },
+                { sleep: 1200 },
+                { default: true },
+              ] as never,
+            ],
+          },
+        });
+        await supervise(sandbox.project, { ...sandbox.agent, onceThrough: true });
+        const lines = progressLines(sandbox);
+        const parked = lineOf(lines, /· T-001 · exit 1 · parked/);
+        const otherEnd = exitOf(lines, 'T-002', 'implement');
+        expect(parked >= 0 && parked < otherEnd, `T-001 parked at line ${parked}, T-002 implement ended at ${otherEnd}`);
+        const one = sandbox.task('T-001').fields;
+        const two = sandbox.task('T-002');
+        expect(one.status === 'parked' && /out-of-scope edit: README.md/.test(one.parked ?? ''), `T-001: ${one.parked}`);
+        expect(two.fields.status === 'done', `T-002 is ${two.fields.status} (${two.fields.parked ?? ''})`);
+        expect(!/quarantine/.test(readLog(sandbox, 'T-002')), 'T-002 was quarantined');
+        const note = join(sandbox.project, '.harness/artifacts/T-002/note.txt');
+        expect(existsSync(note), 'the T-002 artifact was removed or renamed by the T-001 quarantine');
+        const journal = readFileSync(join(sandbox.project, '.harness/JOURNAL.md'), 'utf8');
+        expect(journal.includes('side-by-side unit'), 'the T-001 quarantine restored the shared journal');
+        return `T-001 parked at line ${parked} while T-002 ran · T-002 done; its artifact, journal line and Log untouched`;
+      }),
+  },
+  {
+    name: 'parallel: a runner advance on another task lands mid-unit and parks nothing',
+    run: () =>
+      withSandbox(PARALLEL, async (sandbox) => {
+        seedTask(sandbox, { ...READY, id: 'T-001' });
+        const waiting = sandbox.task(seedTask(sandbox, { id: 'T-002', status: 'needs-input' }));
+        setField(waiting.doc, 'resume', 'spec');
+        saveTask(waiting.path, waiting.doc);
+        sandbox.scenario({ steps: { implement: [sleepThen(1000) as never] } });
+        await supervise(sandbox.project, { ...sandbox.agent, onceThrough: true });
+        const lines = progressLines(sandbox);
+        const advanced = lineOf(lines, /T-002 needs-input → spec \(answered\)/);
+        const start = startOf(lines, 'T-001', 'implement');
+        const end = exitOf(lines, 'T-001', 'implement');
+        expect(start < advanced && advanced < end, `advance at line ${advanced}, T-001 implement ${start}..${end}`);
+        const one = sandbox.task('T-001').fields;
+        expect(one.status === 'done', `T-001 is ${one.status} (${one.parked ?? ''})`);
+        expect(sandbox.task('T-002').fields.status === 'planned', `T-002 is ${sandbox.task('T-002').fields.status}`);
+        return `T-002 advanced at line ${advanced}, inside T-001's implement (${start}..${end}) · T-001 done`;
+      }),
+  },
+  {
+    name: 'parallel: the main checkout holds one unit — a second spec waits for the first',
+    run: () =>
+      withSandbox(PARALLEL, async (sandbox) => {
+        seedTask(sandbox, { id: 'T-001', status: 'spec' });
+        seedTask(sandbox, { id: 'T-002', status: 'spec' });
+        sandbox.scenario({ steps: { spec: [sleepThen(400) as never], plan: [sleepThen(400) as never] } });
+        await supervise(sandbox.project, { ...sandbox.agent, onceThrough: true });
+        const lines = progressLines(sandbox);
+        // Walk the log: a spec or plan unit never starts while another one is open.
+        let open = 0;
+        let most = 0;
+        for (const line of lines) {
+          if (/ · (spec|plan) · \S+ · start/.test(line)) most = Math.max(most, ++open);
+          if (/ · (spec|plan) · exit /.test(line)) open--;
+        }
+        const end = exitOf(lines, 'T-001', 'spec');
+        const next = startOf(lines, 'T-002', 'spec');
+        expect(most === 1, `${most} spec/plan units ran in the main checkout at once`);
+        expect(end >= 0 && next > end, `T-002 spec started at line ${next}, T-001 spec ended at ${end}`);
+        const statuses = ['T-001', 'T-002'].map((id) => sandbox.task(id).fields.status).join(' ');
+        expect(statuses === 'planned planned', `statuses ${statuses}`);
+        return `never two spec/plan units at once · T-002 spec (line ${next}) after T-001 spec (line ${end}) · both planned`;
+      }),
+  },
+  {
+    name: 'parallel: STOP lets the units in flight finish and starts no other',
+    run: () =>
+      withSandbox(PARALLEL, async (sandbox) => {
+        for (const id of ['T-001', 'T-002', 'T-003']) seedTask(sandbox, { ...READY, id });
+        sandbox.scenario({ steps: { implement: [sleepThen(800) as never] } });
+        const paths = tracePaths(sandbox.project);
+        const run = supervise(sandbox.project, { ...sandbox.agent, onceThrough: true });
+        const end = Date.now() + 15_000;
+        while (listRunning(paths).length < 2 && Date.now() < end) await new Promise((r) => setTimeout(r, 20));
+        expect(listRunning(paths).length === 2, 'two units never ran at once');
+        requestStop(sandbox.project);
+        const result = await run;
+        const statuses = ['T-001', 'T-002', 'T-003'].map((id) => sandbox.task(id).fields.status).join(' ');
+        expect(result.exit === 0 && /stopped/.test(result.reason), `exit ${result.exit}: ${result.reason}`);
+        expect(statuses === 'qa qa ready', `statuses ${statuses}`);
+        return `exit 0 · ${result.reason} · ${statuses}`;
+      }),
+  },
+  {
+    name: 'parallel: an agent that cannot run stops new starts; the unit in flight finishes first',
+    run: () =>
+      withSandbox(PARALLEL, async (sandbox) => {
+        for (const id of ['T-001', 'T-002', 'T-003']) seedTask(sandbox, { ...READY, id });
+        sandbox.scenario({
+          steps: { 'T-001:implement': [[{ usageLimit: true }] as never], implement: [sleepThen(800) as never] },
+        });
+        await supervise(sandbox.project, { ...sandbox.agent, onceThrough: true });
+        const lines = progressLines(sandbox);
+        const down = lineOf(lines, /· T-001 · exit 4/);
+        const inFlight = exitOf(lines, 'T-002', 'implement');
+        const third = startOf(lines, 'T-003', 'implement');
+        expect(down >= 0 && down < inFlight && inFlight < third, `down ${down}, T-002 end ${inFlight}, T-003 ${third}`);
+        const statuses = ['T-001', 'T-002', 'T-003'].map((id) => sandbox.task(id).fields.status).join(' ');
+        expect(statuses === 'done done done', `statuses ${statuses}`);
+        return `T-001 down at line ${down} · T-002 finished (${inFlight}) before T-003 started (${third}) · all done`;
+      }),
+  },
+  {
+    name: 'parallel: two qa units each keep their own app; a new step stops only an orphan',
+    run: () =>
+      withSandbox({ ...PARALLEL, ...withApp('ok') }, async (sandbox) => {
+        seedTask(sandbox, { ...READY, id: 'T-001' });
+        seedTask(sandbox, { ...READY, id: 'T-002' });
+        // T-001's qa ends first; the step after it checks for orphans while T-002's app still serves its probe.
+        sandbox.scenario({
+          steps: {
+            'T-001:qa': [[{ sleep: 200 }, PROBE_APP, { default: true }] as never],
+            'T-002:qa': [[{ sleep: 1800 }, PROBE_APP, { default: true }] as never],
+          },
+        });
+        await supervise(sandbox.project, { ...sandbox.agent, onceThrough: true });
+        const lines = progressLines(sandbox);
+        const second = startOf(lines, 'T-002', 'qa');
+        const first = exitOf(lines, 'T-001', 'qa');
+        const after = startOf(lines, 'T-001', 'judge');
+        const end = exitOf(lines, 'T-002', 'qa');
+        expect(second >= 0 && second < first, `the qa units did not overlap (T-002 start ${second}, T-001 end ${first})`);
+        expect(after > first && after < end, `no step started while T-002's app ran (judge ${after}, T-002 end ${end})`);
+        expect(!lines.some((line) => /stopped an orphaned app/.test(line)), 'a live unit\'s app was stopped as an orphan');
+        for (const id of ['T-001', 'T-002']) {
+          const file = join(sandbox.project, '.harness/artifacts', id, 'app.txt');
+          const seen = existsSync(file) ? readFileSync(file, 'utf8') : '(no file)';
+          expect(/^http:\/\/localhost:\d+/.test(seen), `${id}'s qa unit saw no app: ${seen.split('\n')[0]}`);
+        }
+        return `T-001 judge started (line ${after}) while T-002 qa ran · each qa unit reached its own app · no orphan stop`;
+      }),
   },
   {
     name: 'supervisor: one loop per checkout (lock)',

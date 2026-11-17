@@ -60,7 +60,11 @@ export interface HarnessConfig {
     /** Model per role; the judge defaults to a different model from the implementer. */
     models: Partial<Record<Role, string>>;
   };
-  limits: { bounces: number; prototypeRounds: number; unitTimeoutMinutes: number };
+  /**
+   * `parallel`: units in flight at once, one per task. Code units run side by side in their worktrees; the main
+   * checkout (spec, plan) holds one unit at a time. 1 = one unit at a time, as before.
+   */
+  limits: { bounces: number; prototypeRounds: number; unitTimeoutMinutes: number; parallel: number };
   /** Project default gate; a task's own `gate:` wins. null = no gate. */
   gate: string | null;
   /** A command that must exit 0 before a unit starts (stack up, network). null = skip. */
@@ -113,7 +117,7 @@ export const DEFAULT_CONFIG: HarnessConfig = {
       judge: 'opus',
     },
   },
-  limits: { bounces: 2, prototypeRounds: 3, unitTimeoutMinutes: 60 },
+  limits: { bounces: 2, prototypeRounds: 3, unitTimeoutMinutes: 60, parallel: 1 },
   gate: null,
   probe: null,
   verdicts: {
@@ -196,6 +200,8 @@ export function loadConfig(project: string): HarnessConfig {
   const config = merge(DEFAULT_CONFIG, raw);
   if (!['gated', 'full'].includes(config.autonomy.mode)) throw new ConfigError(`autonomy.mode: gated | full`);
   if (!(config.limits.bounces >= 1)) throw new ConfigError('limits.bounces must be ≥ 1');
+  if (!Number.isInteger(config.limits.parallel) || config.limits.parallel < 1)
+    throw new ConfigError('limits.parallel must be an integer ≥ 1');
   if (config.app) {
     const app = { ...APP_DEFAULTS, ...config.app };
     if (typeof app.start !== 'string' || !app.start.includes('{port}'))

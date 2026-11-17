@@ -49,8 +49,8 @@ registers the project in `$HARNESS_HOME/projects.json` (default `~/.harness`).
 | `.harness/trace/unit-NNNN.agents.json` | the `--agents` JSON the unit received | no |
 | `.harness/trace/unit-NNNN.app.json`, `.app.log` | the app started for the unit (pid, port, the runner that owns it) and its output | no |
 | `.harness/trace/unit-NNNN.mcp.json` | the browser unit's MCP config (Playwright MCP only) | no |
-| `.harness/trace/human-writes.jsonl` | the sha256 of every task file a human wrote (CLI or dashboard) | no |
-| `.harness/trace/running.json` | the unit in flight (task, stage, role, pid, start) | no |
+| `.harness/trace/human-writes.jsonl` | the sha256 of every recorded task-file write: a human's (CLI, dashboard) or the runner's, with `who` | no |
+| `.harness/trace/running/<unit>.json` | one file per unit in flight (task, stage, role, pid, start); `limits.parallel` allows several | no |
 | `.harness/trace/supervisor.lock`, `PAUSE`, `STOP` | one loop per checkout; control files read at the unit boundary | no |
 
 Task files are gitignored on purpose: the runner switches between the base branch and task branches, and a
@@ -227,11 +227,11 @@ CLI reads, through the core (`@harness/core`):
 - **Live** — a server-sent-events stream of one snapshot (supervisor state, the unit in flight with its agents, up
   next, recent units), pushed only when it changes.
 - **Trace, Stats, Agents** — every unit's lanes, the cost per stage and task, the registry and its checks.
-- **Writes** go through one module, `dashboard/src/lib/actions.ts`: a POST with the `x-harness: 1` header, refused
-  while the task is in `running.json`, applied with the core's human actions and an atomic file write. Start spawns
-  `harness run` detached with the dashboard's own environment; Pause, Resume and Stop write the same control files
-  the CLI writes. The Start button and the server's first terminal line name who a Start runs (a stand-in, or real
-  `claude -p` on a subscription or an API key).
+- **Writes** go through one module, `dashboard/src/lib/actions.ts`: a POST with the `x-harness: 1` header, refused while
+  the task has a unit in flight (`trace/running/`), applied with the core's human actions and an atomic file write.
+  Start spawns `harness run` detached with the dashboard's own environment; Pause, Resume and Stop write the same
+  control files the CLI writes. The Start button and the server's first terminal line name who a Start runs (a stand-in,
+  or real `claude -p` on a subscription or an API key).
 - **Motion** — one tokens file (`dashboard/src/lib/motion.config.ts`). Only the unit in flight moves continuously;
   a finished unit's lane flashes and folds once; numbers count up on first render only. `prefers-reduced-motion`
   stops all of it, in CSS and in `motion` (`MotionRoot`).
@@ -248,9 +248,10 @@ CLI reads, through the core (`@harness/core`):
 - The runner owns the app: it starts it and stops exactly the process group it started, never a server it did not
   start. The app runs without the AI-agent markers, the agent session's keys, the caller's `NODE_ENV` or Next's
   internals. A browser unit gets one MCP server and no other (`--strict-mcp-config`); other units get none.
-- A human may act on other tasks while a unit runs. Every human write (CLI or dashboard) records the file's sha256 in
-  `.harness/trace/human-writes.jsonl`; the scope contract does not blame the unit for such a file, and a quarantine
-  does not undo it. Human CLI actions refuse inside a unit (`HARNESS_LOOP`). The ledger guards against mistakes, not
+- A human may act on other tasks while a unit runs. Every human write (CLI or dashboard), and every task write of the
+  runner itself, records the file's sha256 and `who` in `.harness/trace/human-writes.jsonl`; the scope contract does
+  not blame the unit for such a file, and a quarantine does not undo it. With several units in flight, what another
+  unit owns (its task file, its artifacts) is that unit's to answer for, not this one's. Human CLI actions refuse inside a unit (`HARNESS_LOOP`). The ledger guards against mistakes, not
   against an agent that forges it.
 
 ## 12. Testing without tokens

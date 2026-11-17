@@ -71,7 +71,8 @@ harness/
   and set `HARNESS_HOME` when they need the registry. Never point a test at `examples/`.
 - **Every file write the dashboard or CLI makes is atomic** (`atomicWrite`: temp file + rename).
 - **Every dashboard write goes through `dashboard/src/lib/actions.ts`**: a POST with `x-harness: 1`, refused while
-  the task is in `running.json`, applied with the core's human actions. Route handlers only delegate to it.
+  the task has a unit in flight (`trace/running/`, any of them), applied with the core's human actions. Route
+  handlers only delegate to it.
 - **Dashboard server modules import with explicit `.ts` extensions** (`./board.ts`) so `node --test` can load them.
 - **Human and agent transitions are separate sets** (`HUMAN_TRANSITIONS`, `AGENT_TRANSITIONS`). The dashboard may
   only offer the human set.

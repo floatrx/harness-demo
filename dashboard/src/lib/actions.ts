@@ -11,7 +11,7 @@
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve } from 'node:path';
 import { loadConfig, transitionContext } from '@harness/core/config';
-import { readRunning, tracePaths } from '@harness/core/paths';
+import { listRunning, tracePaths } from '@harness/core/paths';
 import { ProjectError, addProject, listProjects, removeProject } from '@harness/core/projects';
 import { lockHolder } from '@harness/core/supervise';
 import { type TaskDoc } from '@harness/core/task/parse';
@@ -124,8 +124,9 @@ export async function handleTaskAction(
     if (!/^T-\d{3,}$/.test(taskId)) throw new HttpError(404, `no task ${taskId}`);
     const project = findProject(projectId);
     const paths = tracePaths(project.path);
-    const running = readRunning(paths);
-    if (running?.task === taskId)
+    // Any unit in flight, not only the first: with `limits.parallel` several tasks are busy at once.
+    const running = listRunning(paths).find((entry) => entry.task === taskId);
+    if (running)
       throw new HttpError(
         409,
         `${taskId} is in unit ${running.unit} (${running.stage}) right now; wait or pause first`,

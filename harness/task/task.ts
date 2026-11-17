@@ -80,23 +80,36 @@ export function saveTask(path: string, doc: TaskDoc): void {
 
 const sha256 = (content: string | Buffer) => createHash('sha256').update(content).digest('hex');
 
+/** Who wrote a task file through the ledger: a human (CLI, dashboard) or the runner itself. */
+export type Writer = 'human' | 'runner';
+
 /**
- * A human write (CLI or dashboard) to `<project>/.harness/tasks/T-NNN.md`. The ledger line goes first, so a unit
- * that ends between the two writes never sees the file without its line. A unit running on another task meanwhile
- * is then not blamed for this file, and its quarantine does not undo it (pilot lesson 7).
+ * A recorded write to `<project>/.harness/tasks/T-NNN.md`: the ledger line goes first, then the atomic write, so a unit
+ * that ends between the two never sees the file without its line. A unit running on another task meanwhile is then
+ * not blamed for this file, and its quarantine does not undo it (pilot lesson 7). The runner records its own writes
+ * too: with several units in flight, one unit's outcome or an advance step lands while another unit runs (W2).
  */
-export function saveHumanTask(path: string, doc: TaskDoc): void {
-  const text = serializeTask(doc);
+export function saveRecordedText(path: string, text: string, who: Writer): void {
   const project = dirname(dirname(dirname(path)));
   const ledger = tracePaths(project).humanWrites;
   mkdirSync(dirname(ledger), { recursive: true });
-  const line = { path: relative(project, path), sha256: sha256(text), at: new Date().toISOString() };
+  const line = { path: relative(project, path), sha256: sha256(text), who, at: new Date().toISOString() };
   appendFileSync(ledger, `${JSON.stringify(line)}\n`);
   atomicWrite(path, text);
 }
 
-/** True when `content` at `rel` (a task file) is exactly what a human wrote there, per the ledger. */
-export function isHumanWrite(project: string, rel: string, content: Buffer | undefined): boolean {
+/** A human write (CLI or dashboard). */
+export function saveHumanTask(path: string, doc: TaskDoc): void {
+  saveRecordedText(path, serializeTask(doc), 'human');
+}
+
+/** The runner's own write: an outcome, a move, a restore, a park. */
+export function saveRunnerTask(path: string, doc: TaskDoc): void {
+  saveRecordedText(path, serializeTask(doc), 'runner');
+}
+
+/** True when `content` at `rel` (a task file) is exactly what a human or the runner wrote there, per the ledger. */
+export function isRecordedWrite(project: string, rel: string, content: Buffer | undefined): boolean {
   if (!content || !/^\.harness\/tasks\/T-\d{3,}\.md$/.test(rel)) return false;
   const ledger = tracePaths(project).humanWrites;
   if (!existsSync(ledger)) return false;
